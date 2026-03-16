@@ -289,3 +289,86 @@ uxas:
   <KeepInAreaList><uint64>1</uint64></KeepInAreaList>
   <KeepOutAreaList><uint64>10</uint64></KeepOutAreaList>
 </OperatingRegion>''', '\uc6b4\uc6a9 \uc601\uc5ed \uc124\uc815 XML')
+
+
+def write_chapter5_extra(pdf):
+    """Chapter 5 Extra: Task State Machine from official docs"""
+    pdf.sec('\ud0dc\uc2a4\ud06c \uc0c1\ud0dc \uba38\uc2e0 (Task State Machine)')
+    pdf.p('\uacf5\uc2dd \ubb38\uc11c(CoreServices.md)\uc5d0 \ub530\ub974\uba74, \ubaa8\ub4e0 Task\ub294 9\uac1c\uc758 \uc0c1\ud0dc\ub97c \uac00\uc9d1\ub2c8\ub2e4. \uc774 \uc0c1\ud0dc \uba38\uc2e0\uc744 \uc774\ud574\ud558\uba74 \ud0dc\uc2a4\ud06c\uc758 \ub3d9\uc791\uc744 \uc644\uc804\ud788 \ud30c\uc545\ud560 \uc218 \uc788\uc2b5\ub2c8\ub2e4.')
+    pdf.diagram('Task \uc0c1\ud0dc \uba38\uc2e0 (9\uac1c \uc0c1\ud0dc)',
+'''  Init ----(\ud0dc\uc2a4\ud06c \ucd08\uae30\ud654 \uc644\ub8cc)----> Idle
+    |                                   |
+    | [TaskInitialized \ubc1c\uc1a1]           | [UniqueAutomationRequest \uc218\uc2e0]
+    v                                   v
+                                   SensorRequest
+                                        |
+                                        | [SensorFootprintResponse \uc218\uc2e0]
+                                        v
+                                   OptionRoutes
+                                        |
+                                        | [RoutePlanResponse \uc218\uc2e0]
+                                        v
+                                   OptionsPublished
+                                        |  [TaskPlanOptions \ubc1c\uc1a1]
+                                        |
+                                        | [TaskImplementationRequest \uc218\uc2e0]
+                                        v
+                                   FinalRoutes
+                                        |
+                                        | [RoutePlanResponse \uc218\uc2e0]
+                                        v
+                                   OptionSelected
+                                        |  [TaskImplementationResponse \ubc1c\uc1a1]
+                                        |
+                                        | [EntityState\uc5d0 TaskID \ud3ec\ud568]
+                                        v
+                                   Active -------> Completed
+                                  (\uc6e8\uc774\ud3ec\uc778\ud2b8    (\ud0dc\uc2a4\ud06c \uc644\ub8cc)
+                                   + \uc13c\uc11c \uc81c\uc5b4)      |
+                                                     v
+                                                   Idle (\ub300\uae30)''')
+    pdf.p('\uac01 \uc0c1\ud0dc\uc758 \uc5ed\ud560:')
+    pdf.tbl(
+        ['\uc0c1\ud0dc', '\uc124\uba85'],
+        [
+            ['Init', '\ud0dc\uc2a4\ud06c \uc0dd\uc131 \uc9c1\ud6c4. \ub0b4\ubd80 \ucd08\uae30\ud654 \uc218\ud589 (\uc9c0\ud615 \ub85c\ub4dc \ub4f1)'],
+            ['Idle', '\ucd08\uae30\ud654 \uc644\ub8cc, \uc694\uccad \ub300\uae30 \uc911'],
+            ['SensorRequest', 'UAV \uc13c\uc11c \ud48b\ud504\ub9b0\ud2b8 \uacc4\uc0b0 \uc694\uccad \ud6c4 \uc751\ub2f5 \ub300\uae30'],
+            ['OptionRoutes', '\ud0dc\uc2a4\ud06c \uc635\uc158\ubcc4 \uacbd\ub85c \uc694\uccad \ud6c4 \uc751\ub2f5 \ub300\uae30'],
+            ['OptionsPublished', 'TaskPlanOptions \ubc1c\uc1a1 \ud6c4 \ud560\ub2f9 \uacb0\uacfc \ub300\uae30'],
+            ['FinalRoutes', '\uc120\ud0dd\ub41c \uc635\uc158\uc73c\ub85c \ucd5c\uc885 \uacbd\ub85c \uc694\uccad'],
+            ['OptionSelected', '\ucd5c\uc885 \uc6e8\uc774\ud3ec\uc778\ud2b8 \uc751\ub2f5 \uc644\ub8cc, \uc2e4\ud589 \ub300\uae30'],
+            ['Active', 'UAV\uac00 \ud0dc\uc2a4\ud06c \uc218\ud589 \uc911. \uc6e8\uc774\ud3ec\uc778\ud2b8/\uc13c\uc11c \uc81c\uc5b4'],
+            ['Completed', '\ud0dc\uc2a4\ud06c \uc644\ub8cc. TaskComplete \ubc1c\uc1a1 \ud6c4 Idle\ub85c'],
+        ],
+        [45, 140]
+    )
+
+    pdf.sec('\uc11c\ube44\uc2a4 \uac1c\ubc1c \uac00\uc774\ub4dc (Step-by-Step)')
+    pdf.p('\uacf5\uc2dd \ubb38\uc11c(Services.md)\uc5d0 \ub530\ub978 \uc0c8 \uc11c\ube44\uc2a4 \uac1c\ubc1c \uc808\ucc28:')
+    pdf.bullets([
+        'Step 1: 00_ServiceTemplate.cpp/.h \ud30c\uc77c \ubcf5\uc0ac',
+        'Step 2: \ud30c\uc77c\uba85\uc744 \uc0c8 \uc11c\ube44\uc2a4\uba85\uc73c\ub85c \ubcc0\uacbd',
+        'Step 3: "c00_ServiceTemplate" \ubb38\uc790\uc5f4\uc744 \uc0c8 \uc11c\ube44\uc2a4\uba85\uc73c\ub85c \ub300\uccb4',
+        'Step 4: \ud5e4\ub354 \ud30c\uc77c\uc758 include guard \ubcc0\uacbd',
+        'Step 5: 00_ServiceList.h\uc5d0 \uc0c8 \uc11c\ube44\uc2a4 \ub4f1\ub85d',
+        'Step 6: meson.build\uc758 srcs_services \ubc30\uc5f4\uc5d0 \ud30c\uc77c \ucd94\uac00',
+        'Step 7: \uc7ac\ucef4\ud30c\uc77c (make -j all)',
+    ])
+
+    pdf.sec('Validator \uc11c\ube44\uc2a4 \uc0c1\ud0dc \uba38\uc2e0')
+    pdf.p('AutomationRequestValidatorService\ub294 2\uac1c \uc0c1\ud0dc(idle/busy)\ub85c \ub3d9\uc791\ud569\ub2c8\ub2e4:')
+    pdf.diagram('Validator \uc0c1\ud0dc \uba38\uc2e0',
+'''  [idle] ------(AutomationRequest \uc218\uc2e0)------> [busy]
+    ^                                                |
+    |  (\ud050 \ube44\uc5c8\uc73c\uba74)                               |
+    +<--(UniqueAutomationResponse \uc218\uc2e0)---+        |
+    |                                      |        |
+    |   [busy] \uc0c1\ud0dc\uc5d0\uc11c:                      |        |
+    |   - \uc0c8 \uc694\uccad\uc740 \ud050\uc5d0 \ucd94\uac00                  |        |
+    |   - \uc751\ub2f5 \uc218\uc2e0\uc2dc \ub2e4\uc74c \uc694\uccad \ucc98\ub9ac      |        |
+    |   - \ud0c0\uc784\uc544\uc6c3\uc2dc \uc624\ub958 \ucc98\ub9ac \ud6c4 \ub2e4\uc74c   |        |
+    +<-(\ud050\uc774 \ube44\uc5c8\uc744 \ub54c)---------+        |
+                                               v
+                             \uac80\uc99d \ud1b5\uacfc: UniqueAutomationRequest \ubc1c\uc1a1
+                             \uac80\uc99d \uc2e4\ud328: ServiceStatus(\uc624\ub958) \ubc1c\uc1a1''')
