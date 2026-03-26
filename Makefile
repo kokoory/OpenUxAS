@@ -50,7 +50,7 @@ SOURCE_DIRS:=$(SOURCE_DIR)/Communications \
 CXX=$(ANODENV)g++
 
 # Default C++ compilation flags
-CXX_FLAGS:=-fPIC -std=c++11
+CXX_FLAGS:=-fPIC -std=c++17
 
 # Note: we suppress boost deprecation warnings because they are triggering only
 #       on boost-internal headers.
@@ -73,11 +73,11 @@ endif
 
 # Linker flags
 ifeq ($(PLATFORM),linux)
-    LINKER_FLAGS:=-std=c++11 -llmcp -lzyre -lpugixml -lboost_filesystem \
+    LINKER_FLAGS:=-std=c++17 -llmcp -lzyre -lpugixml -lboost_filesystem \
 -lboost_regex -lboost_date_time -lboost_system -lSQLiteCpp -lsqlite3 \
 -lczmq -luuid -lserial -lzmq -ldl -lpthread -static-libstdc++ -static-libgcc
 else
-    LINKER_FLAGS:=-std=c++11 -llmcp -lzyre -lpugixml -lboost_filesystem \
+    LINKER_FLAGS:=-std=c++17 -llmcp -lzyre -lpugixml -lboost_filesystem \
 -lboost_regex -lboost_date_time -lboost_system -lSQLiteCpp -lsqlite3 \
 -lczmq -lserial -lzmq -ldl -lpthread
 endif
