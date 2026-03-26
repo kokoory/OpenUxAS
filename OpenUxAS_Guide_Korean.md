@@ -504,6 +504,331 @@ LMCP(Lightweight Message Control Protocol)는 OpenUxAS의 모든 통신의 기�
 | 영역 | KeepInZone | 비행 허용 영역 |
 | 영역 | KeepOutZone | 비행 금지 영역 |
 
+## 3.5 입출력 변수 총정리 (Input/Output Variables)
+
+OpenUxAS에 **무엇을 입력하면, 무엇이 출력되는지** 체계적으로 정리합니다.
+
+### 3.5.1 전체 입출력 흐름
+
+```
+입력 변수:                                    출력 변수:
++----------------------------------+         +----------------------------------+
+| 1. UAV 설정                       |         | 1. MissionCommand                |
+|    (속도, 고도, 카메라 사양)        |         |    (차량별 웨이포인트 시퀀스)       |
+| 2. UAV 초기 상태                   |         | 2. GimbalAngleAction             |
+|    (위치, 방향, 속도)              |         |    (각 WP에서 카메라 방향)         |
+| 3. 임무 정의                       | ──→    | 3. TaskAssignmentSummary         |
+|    (영역/라인/지점 탐색)           | OpenUxAS |    (어떤 UAV가 어떤 임무를)        |
+| 4. 운용 영역                       |         | 4. AutomationResponse            |
+|    (비행 허용/금지 구역)           |         |    (전체 계획 결과)               |
+| 5. 자동화 요청                     |         | 5. AirVehicleState (연속)        |
+|    (차량 목록 + 임무 목록)         |         |    (비행 중 위치/속도/고도)        |
++----------------------------------+         +----------------------------------+
+```
+
+### 3.5.2 입력 변수 상세 (Input Variables)
+
+#### (A) UAV 설정 - AirVehicleConfiguration
+
+UAV의 물리적/센서적 사양을 정의합니다. **한 번만 설정하면 시스템 전체에서 사용됩니다.**
+
+| 변수명 | 타입 | 단위 | 예시값 | 설명 | 영향 |
+|--------|------|------|--------|------|------|
+| ID | int64 | - | 400 | UAV 고유 식별자 | 모든 메시지에서 이 ID로 참조 |
+| Label | string | - | "UAV_400" | 표시 이름 | AMASE 화면 표시용 |
+| NominalSpeed | float | m/s | 22.0 | 기본 비행 속도 | 비용(시간) 계산의 기준 |
+| MinimumSpeed | float | m/s | 15.0 | 최소 비행 속도 | 속도 제한 검증 |
+| MaximumSpeed | float | m/s | 35.0 | 최대 비행 속도 | 속도 제한 검증 |
+| NominalAltitude | float | m (MSL) | 700.0 | 기본 비행 고도 | 센서 풋프린트 크기 결정 |
+| MinimumAltitude | float | m | 50.0 | 최저 비행 고도 | 고도 제한 검증 |
+| MaximumAltitude | float | m | 1500.0 | 최고 비행 고도 | 고도 제한 검증 |
+| NominalAltitudeType | enum | - | MSL | 고도 기준 (MSL/AGL) | 고도 해석 방식 |
+
+#### (A-1) 카메라 센서 설정 - CameraConfiguration
+
+UAV에 탑재된 카메라의 사양입니다. **탐색 레인 간격과 GSD에 직접 영향합니다.**
+
+| 변수명 | 타입 | 단위 | 예시값 | 설명 | 영향 |
+|--------|------|------|--------|------|------|
+| PayloadID | int64 | - | 1 | 센서 고유 ID | 센서 선택 시 참조 |
+| SupportedWavelengthBand | enum | - | EO | 센서 종류 (EO/IR/LWIR) | 임무-센서 매칭에 사용 |
+| MaxHorizontalFieldOfView | float | degree | 45.0 | 최대 수평 시야각 | 센서 풋프린트 폭 결정 |
+| MinHorizontalFieldOfView | float | degree | 2.0 | 최소 수평 시야각 | 줌 인 시 최소 FOV |
+| VideoStreamHorizontalResolution | int32 | pixel | 1920 | 카메라 수평 해상도 | GSD 계산에 사용 |
+| VideoStreamVerticalResolution | int32 | pixel | 1080 | 카메라 수직 해상도 | GSD 계산에 사용 |
+
+```
+센서 풋프린트 계산 공식:
+
+풋프린트 폭 = 2 * 고도(NominalAltitude) * tan(FOV/2)
+           = 2 * 700m * tan(45/2)
+           = 2 * 700 * 0.414
+           = ~580m
+
+탐색 레인 간격 = 풋프린트 폭 * 0.9 (10% 오버랩)
+              = 580 * 0.9 = ~522m
+
+GSD = 고도 * 센서크기 / 초점거리
+    또는 = 풋프린트 폭 / 수평해상도
+    = 580m / 1920pixel = 0.30 m/pixel
+```
+
+#### (B) UAV 초기 상태 - AirVehicleState
+
+시뮬레이션 시작 시 UAV의 초기 위치와 상태입니다. **경로 비용 계산의 출발점이 됩니다.**
+
+| 변수명 | 타입 | 단위 | 예시값 | 설명 |
+|--------|------|------|--------|------|
+| ID | int64 | - | 400 | AirVehicleConfiguration의 ID와 일치 |
+| Latitude | float | degree | 45.3171 | 초기 위도 (WGS84) |
+| Longitude | float | degree | -120.9139 | 초기 경도 (WGS84) |
+| Altitude | float | m | 700.0 | 초기 고도 |
+| AltitudeType | enum | - | MSL | 고도 기준 |
+| Airspeed | float | m/s | 22.0 | 초기 비행 속도 |
+| Heading | float | degree | 0.0 | 초기 방향 (0=북, 90=동) |
+| EnergyAvailable | float | % | 100.0 | 잔여 에너지 |
+
+#### (C) 임무 정의 - Task
+
+수행할 임무를 정의합니다. **임무 유형에 따라 입력 변수가 다릅니다.**
+
+**(C-1) 영역 탐색 - AngledAreaSearchTask**
+
+| 변수명 | 타입 | 단위 | 예시값 | 설명 | 영향 |
+|--------|------|------|--------|------|------|
+| TaskID | int64 | - | 1000 | 임무 고유 ID | AutomationRequest에서 참조 |
+| Label | string | - | "AreaSearch" | 표시 이름 | 로그/디버깅용 |
+| SearchAreaID | int64 | - | 1 | 탐색할 AreaOfInterest의 ID | 탐색 영역 지정 |
+| SweepAngle | float | degree | 45 | 탐색 방향 (0=북, 90=동) | 레인 방향 결정 |
+| GroundSampleDistance | float | m/pixel | 0.5 | 요구 지상 해상도 | 비행 고도 조정 가능 |
+| DesiredWavelengthBands | enum | - | EO | 사용할 센서 종류 | 센서-임무 매칭 |
+
+**(C-2) 라인 탐색 - LineSearchTask**
+
+| 변수명 | 타입 | 단위 | 예시값 | 설명 | 영향 |
+|--------|------|------|--------|------|------|
+| TaskID | int64 | - | 1000 | 임무 고유 ID | |
+| PointList | Location3D[] | lat/lon | 좌표 리스트 | 라인 경로 좌표들 | 비행 경로 결정 |
+| ViewAngleList | Wedge[] | degree | Azimuth=0, Vertical=-60 | 카메라 조사각 | 오프셋 거리 결정 |
+| UseInertialViewAngles | bool | - | false | 관성/상대 각도 | 짐벌 제어 방식 |
+
+**(C-3) 지점 탐색 - PointSearchTask**
+
+| 변수명 | 타입 | 단위 | 예시값 | 설명 | 영향 |
+|--------|------|------|--------|------|------|
+| TaskID | int64 | - | 1000 | 임무 고유 ID | |
+| SearchLocation | Location3D | lat/lon | 좌표 | 감시할 지점 | 로이터 중심점 |
+| StandoffDistance | float | m | 500.0 | 감시 거리 | 로이터 반경 결정 |
+
+**(C-4) 패턴 탐색 - PatternSearchTask**
+
+| 변수명 | 타입 | 단위 | 예시값 | 설명 | 영향 |
+|--------|------|------|--------|------|------|
+| TaskID | int64 | - | 1000 | 임무 고유 ID | |
+| SearchLocation | Location3D | lat/lon | 좌표 | 패턴 중심점 | |
+| Pattern | enum | - | Spiral | 패턴 종류 (Spiral/Sector/Sweep) | 비행 패턴 형태 |
+| Extent | float | m | 2000.0 | 탐색 범위 | 패턴 크기 |
+
+#### (D) 영역 정의 - AreaOfInterest / LineOfInterest
+
+| 변수명 | 타입 | 단위 | 예시값 | 설명 |
+|--------|------|------|--------|------|
+| AreaID / LineID | int64 | - | 1 | 영역/라인 고유 ID |
+| BoundaryPoints (Area) | Location3D[] | lat/lon | 다각형 꼭지점 | 탐색 영역 경계 |
+| Circle.CenterPoint (Area) | Location3D | lat/lon | 좌표 | 원형 영역 중심 |
+| Circle.Radius (Area) | float | m | 2000.0 | 원형 영역 반경 |
+| PointList (Line) | Location3D[] | lat/lon | 좌표 리스트 | 라인 경로 |
+
+#### (E) 운용 영역 제한
+
+| 변수명 | 타입 | 설명 | 영향 |
+|--------|------|------|------|
+| KeepInZone.ZoneID | int64 | 비행 허용 영역 ID | 영역 밖 비행 불가 |
+| KeepInZone.Boundary | Polygon | 허용 영역 경계 | 경로 계획 제약 |
+| KeepInZone.MinAltitude | float (m) | 최소 허용 고도 | 고도 제한 |
+| KeepInZone.MaxAltitude | float (m) | 최대 허용 고도 | 고도 제한 |
+| KeepOutZone.ZoneID | int64 | 비행 금지 영역 ID | 경로가 이 영역을 회피 |
+| KeepOutZone.Boundary | Polygon | 금지 영역 경계 | Visibility Graph에서 장애물 |
+| OperatingRegion.ID | int64 | 운용 영역 ID | KeepIn + KeepOut 조합 |
+| OperatingRegion.KeepInAreas | int64[] | 허용 영역 ID 목록 | |
+| OperatingRegion.KeepOutAreas | int64[] | 금지 영역 ID 목록 | |
+
+#### (F) 자동화 요청 - AutomationRequest
+
+**시스템에 임무 실행을 요청하는 트리거 메시지입니다.**
+
+| 변수명 | 타입 | 예시값 | 설명 | 영향 |
+|--------|------|--------|------|------|
+| EntityList | int64[] | [400, 500] | 사용할 UAV ID 목록 | 할당 대상 차량 |
+| TaskList | int64[] | [1000, 1001] | 수행할 임무 ID 목록 | 할당 대상 임무 |
+| OperatingRegion | int64 | 100 | 운용 영역 ID | 경로 계획 제약 |
+| RedoAllTasks | bool | false | 전체 재계획 여부 | true 시 모든 임무 재할당 |
+
+#### (G) 서비스 설정 파라미터
+
+| 서비스 | 변수명 | 타입 | 기본값 | 설명 |
+|--------|--------|------|--------|------|
+| UxAS (전역) | EntityID | int64 | 100 | 이 UxAS 인스턴스 ID |
+| UxAS (전역) | EntityType | string | "Aircraft" | 엔티티 유형 |
+| Bridge | TcpAddress | string | "tcp://127.0.0.1:5555" | AMASE 통신 주소 |
+| Bridge | Server | bool | TRUE | 서버/클라이언트 모드 |
+| BranchBound | NumberNodesMaximum | int32 | 0 | B&B 탐색 노드 제한 (0=무제한) |
+| BranchBound | CostFunction | enum | MINMAX | MINMAX 또는 CUMULATIVE |
+| WaypointPlanMgr | NumberWaypointsToServe | int32 | 0 | 한번에 전달할 WP 수 (0=전체) |
+| WaypointPlanMgr | NumberWaypointsOverlap | int32 | 0 | 세그먼트 간 WP 오버랩 수 |
+| WaypointPlanMgr | TurnType | enum | TurnShort | 회전 방식 |
+| Validator | MaxResponseTime_ms | int32 | 10000 | 응답 타임아웃 (ms) |
+
+### 3.5.3 출력 변수 상세 (Output Variables)
+
+#### (H) 임무 할당 결과 - TaskAssignmentSummary
+
+| 변수명 | 타입 | 설명 |
+|--------|------|------|
+| CorrespondingAutomationRequestID | int64 | 원본 요청 ID |
+| TaskList | TaskAssignment[] | 할당 결과 목록 |
+| TaskAssignment.TaskID | int64 | 할당된 임무 ID |
+| TaskAssignment.AssignedVehicle | int64 | 할당된 UAV ID |
+| TaskAssignment.OptionID | int64 | 선택된 옵션 ID |
+| TaskAssignment.TimeThreshold | int64 | 예상 도착 시간 (ms) |
+
+#### (I) 비행 명령 - MissionCommand
+
+| 변수명 | 타입 | 단위 | 설명 |
+|--------|------|------|------|
+| VehicleID | int64 | - | 대상 UAV ID |
+| CommandID | int64 | - | 명령 고유 ID |
+| WaypointList | Waypoint[] | - | 웨이포인트 시퀀스 |
+| FirstWaypoint | int64 | - | 첫 번째 WP 번호 |
+| Status | enum | - | Pending/Approved/InProcess/Executed |
+
+#### (I-1) 각 웨이포인트 - Waypoint
+
+| 변수명 | 타입 | 단위 | 설명 |
+|--------|------|------|------|
+| Number | int64 | - | 웨이포인트 번호 |
+| Latitude | float | degree | 목표 위도 |
+| Longitude | float | degree | 목표 경도 |
+| Altitude | float | m | 목표 고도 |
+| AltitudeType | enum | - | MSL/AGL |
+| Speed | float | m/s | 비행 속도 |
+| SpeedType | enum | - | Airspeed/Groundspeed |
+| NextWaypoint | int64 | - | 다음 WP 번호 |
+| TurnType | enum | - | TurnShort/FlyOver |
+| VehicleActionList | Action[] | - | 이 WP에서 실행할 액션들 |
+
+#### (I-2) 짐벌(카메라) 명령 - GimbalAngleAction
+
+| 변수명 | 타입 | 단위 | 설명 |
+|--------|------|------|------|
+| PayloadID | int64 | - | 카메라 센서 ID |
+| Azimuth | float | degree | 카메라 수평 방향 |
+| Elevation | float | degree | 카메라 수직 각도 (하향 음수) |
+| Rotation | float | degree | 카메라 회전 각도 |
+
+#### (J) 경로 비용 - AssignmentCostMatrix
+
+| 변수명 | 타입 | 설명 |
+|--------|------|------|
+| CorrespondingAutomationRequestID | int64 | 원본 요청 ID |
+| TaskLevelRelationship | TaskOptionCost[] | 비용 행렬 항목들 |
+| TaskOptionCost.VehicleID | int64 | UAV ID |
+| TaskOptionCost.InitialTaskID | int64 | 출발 임무 ID (0=현재 위치) |
+| TaskOptionCost.DestinationTaskID | int64 | 목적 임무 ID |
+| TaskOptionCost.TimeToGo | int64 | 이동 비용 (시간, ms) |
+
+#### (K) 비행 중 상태 - AirVehicleState (출력)
+
+비행 중 AMASE가 연속적으로 발송하는 UAV 상태 메시지입니다.
+
+| 변수명 | 타입 | 단위 | 설명 |
+|--------|------|------|------|
+| ID | int64 | - | UAV ID |
+| Latitude | float | degree | 현재 위도 |
+| Longitude | float | degree | 현재 경도 |
+| Altitude | float | m | 현재 고도 |
+| Airspeed | float | m/s | 현재 속도 |
+| Heading | float | degree | 현재 방향 |
+| Groundspeed | float | m/s | 지상 속도 |
+| EnergyAvailable | float | % | 잔여 에너지 |
+| ActualEnergyRate | float | %/s | 에너지 소모율 |
+| CurrentWaypoint | int64 | - | 현재 추적 중인 WP 번호 |
+| CurrentCommand | int64 | - | 현재 실행 중인 명령 ID |
+| PayloadStateList | PayloadState[] | - | 센서 상태 |
+
+### 3.5.4 입력-출력 변환 시퀀스 플로우 (신규 추가)
+
+> 입력 변수가 어떤 단계에서 어떤 출력 변수로 변환되는지 보여줍니다.
+
+```mermaid
+sequenceDiagram
+    participant Input as 입력 변수
+    participant Validator as Validator
+    participant Task as Task Service
+    participant Sensor as SensorManager
+    participant RP as RoutePlanner
+    participant RA as RouteAggregator
+    participant BnB as BranchBound
+    participant PB as PlanBuilder
+    participant Output as 출력 변수
+
+    Note over Input, Output: ─── 입력 단계 ───
+
+    Input->>Validator: AirVehicleConfiguration<br/>(속도, 고도, 카메라 FOV, 해상도)
+    Input->>Validator: AirVehicleState<br/>(초기 위치, 방향, 속도)
+    Input->>Task: Task 정의<br/>(영역/라인/지점, SweepAngle, GSD)
+    Input->>RP: KeepInZone / KeepOutZone<br/>(운용 영역 경계)
+    Input->>Validator: AutomationRequest<br/>(차량 목록, 임무 목록, 운용영역 ID)
+
+    Note over Input, Output: ─── 변환 단계 ───
+
+    Validator->>Task: UniqueAutomationRequest
+
+    Task->>Sensor: SensorFootprintRequest<br/>(고도 + FOV + GSD)
+    Sensor-->>Task: SensorFootprintResponse<br/>(풋프린트 폭 w = 580m)
+
+    Task->>Task: 입력→중간변수 변환:<br/>풋프린트 폭 → 레인간격(522m)<br/>영역크기 → 레인수(10개)<br/>SweepAngle → 레인방향
+
+    Task->>RP: RoutePlanRequest<br/>(옵션별 웨이포인트 경로)
+    RP-->>Task: RoutePlanResponse<br/>(경로 비용 = 거리/시간)
+
+    Task->>RA: TaskPlanOptions<br/>(차량별 옵션 + 비용)
+
+    RA->>RP: RoutePlanRequest<br/>(차량위치 → 옵션 시작점)
+    RP-->>RA: RoutePlanResponse
+
+    Note over Input, Output: ─── 출력 단계 ───
+
+    RA->>Output: AssignmentCostMatrix<br/>(N차량 x M임무 비용 행렬)
+
+    RA->>BnB: AssignmentCostMatrix
+    BnB->>Output: TaskAssignmentSummary<br/>(UAV-임무 최적 할당)
+
+    BnB->>PB: TaskAssignmentSummary
+    PB->>Task: TaskImplementationRequest
+    Task-->>PB: TaskImplementationResponse
+
+    PB->>Output: MissionCommand<br/>(웨이포인트 시퀀스)<br/>+ GimbalAngleAction<br/>(카메라 방향)
+    PB->>Output: AutomationResponse<br/>(전체 계획 결과)
+```
+
+### 3.5.5 입력 변수 민감도 분석
+
+각 입력 변수가 결과에 미치는 영향도입니다.
+
+| 입력 변수 | 영향받는 출력 | 민감도 | 설명 |
+|----------|-------------|--------|------|
+| NominalSpeed | 비용행렬, 할당결과 | 높음 | 빠른 UAV에 먼 임무 할당 가능 |
+| NominalAltitude | 레인간격, 레인수, GSD | 높음 | 고도 2배 → 풋프린트 2배 → 레인 절반 |
+| MaxHorizontalFOV | 풋프린트 폭, 레인수 | 높음 | FOV 넓을수록 적은 레인으로 커버 |
+| SweepAngle | 레인 방향, 비행거리 | 중간 | 최적 각도 시 비행거리 최소화 |
+| GroundSampleDistance | 비행 고도 | 중간 | 높은 GSD 요구 → 저고도 비행 필요 |
+| UAV 초기 위치 | 비용행렬, 할당결과 | 높음 | 가까운 UAV에 우선 할당 |
+| KeepOutZone 크기 | 경로길이, 비용 | 중간 | 금지구역 클수록 우회 경로 증가 |
+| NumberNodesMaximum | 할당 최적성, 계산시간 | 높음 | 0=최적해, 값 제한→근사해(빠름) |
+| CostFunction | 할당 결과 | 높음 | MINMAX=부하균형, CUMULATIVE=효율 |
+| EntityList 크기 | 조합 수, 계산시간 | 높음 | N대 M임무 → N!/(N-M)! 조합 |
+
 ---
 
 # 제4장 설치 및 빌드
