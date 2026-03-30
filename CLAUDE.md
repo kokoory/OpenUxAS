@@ -379,3 +379,120 @@ Key variables defined in `infrastructure/paths.sh`:
 - All services are singletons in practice (one instance per type per entity)
 - XML configuration is parsed via pugixml (`pugi::xml_node`)
 - Shared pointers used extensively for LMCP message objects
+
+## Web UI (uxas_ui_server.py + uxas_ui.html)
+
+A browser-based control panel for OpenUxAS was added in this project. It allows configuring, running, and analyzing OpenUxAS without command-line interaction.
+
+### How to Run
+
+```bash
+python3 uxas_ui_server.py          # starts on port 8080
+python3 uxas_ui_server.py 9000     # custom port
+# Open http://localhost:8080 in a browser
+```
+
+### Architecture
+
+- **Backend**: `uxas_ui_server.py` (~460 lines) - Pure Python, no external dependencies
+  - HTTP server using `http.server` standard library
+  - REST API endpoints under `/api/`
+  - Manages UxAS process lifecycle (start/stop via subprocess)
+  - Generates XML configs, validates settings, reads SQLite log databases
+  - Custom run mode: creates `custom_run/` directory with generated XML files
+
+- **Frontend**: `uxas_ui.html` (~570 lines) - Single-file HTML/CSS/JS
+  - 6 tabs: Dashboard, Run Control, Input Config, Algorithm, Results, XML Editor
+  - No external dependencies (no React, no npm, no CDN)
+  - Communicates with backend via fetch() API calls
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/examples` | List available examples |
+| GET | `/api/status` | UxAS running status |
+| GET | `/api/output` | Console output buffer |
+| GET | `/api/outputs?path=` | Load run results (messages, DB tables) |
+| GET | `/api/logdb?path=&table=` | Read SQLite log database |
+| GET | `/api/file?path=` | Read any project file |
+| POST | `/api/start` | Start UxAS with config |
+| POST | `/api/stop` | Stop UxAS |
+| POST | `/api/validate` | Validate configuration |
+| POST | `/api/generate/vehicle` | Generate AirVehicleConfiguration XML |
+| POST | `/api/generate/task` | Generate task XML |
+| POST | `/api/generate/request` | Generate AutomationRequest XML |
+| POST | `/api/generate/config` | Generate full UxAS config XML |
+| POST | `/api/run/custom` | Generate all files + start UxAS |
+| POST | `/api/save` | Save file to disk |
+
+### UI Tabs
+
+1. **Dashboard** - Status overview, quick start, pipeline visualization, recent output
+2. **Run Control** - Example selection, entity ID, run duration, console output
+3. **Input Config** - Add/remove vehicles (speed, altitude, position), tasks (area/line/point search), zones
+4. **Algorithm** - Enable/disable services, B&B cost function (MINMAX/CUMULATIVE), route planner params, waypoint manager settings
+5. **Results** - Message log viewer, SQLite DB browser, assignment/waypoint tables, CSV export
+6. **XML Editor** - Load/edit/save XML configs, syntax validation, generated preview
+
+### Key Design Decisions
+
+- **No external dependencies**: Works on any Python 3 installation with standard library only
+- **Single HTML file**: All CSS and JS inline, no build step required
+- **Stateless frontend**: All state managed by backend, frontend fetches on demand
+- **Custom run mode**: POST to `/api/run/custom` generates all XML files (vehicle configs, vehicle states, tasks, automation request, UxAS config) in `custom_run/` and starts UxAS
+
+### Files Modified in This Project
+
+| File | Change |
+|------|--------|
+| `Makefile` | C++11 -> C++17 for Boost 1.83 compatibility |
+| `infrastructure/specs/uxas.anod` | Removed boost/sqlite deps (use system libs) |
+| `infrastructure/specs/sqlitecpp.anod` | Removed sqlite dep (use system lib) |
+
+### Files Created in This Project
+
+| File | Description |
+|------|-------------|
+| `uxas_ui_server.py` | Python web server backend |
+| `uxas_ui.html` | Browser-based control panel |
+| `OpenUxAS_Guide_Korean.md` | Korean guide with 14 Mermaid diagrams + I/O variables |
+| `OpenUxAS_Guide_Korean.pdf` | PDF version of Korean guide |
+| `generate_pdf.py` | Markdown-to-PDF converter with Korean font support |
+| `CLAUDE.md` | This project guide |
+
+## Session History & Context
+
+This section documents what was done across sessions so a new Claude session can continue seamlessly.
+
+### Build Environment
+
+- **OS**: Linux (headless, no X11 display)
+- **Python**: 3.11.14
+- **GCC**: System default
+- **Boost**: 1.83 (system-installed, requires C++17)
+- **SQLite**: System-installed
+- **tkinter**: NOT available (hence web UI instead of desktop UI)
+- **Branch**: `claude/run-example-check-output-E8TXv`
+
+### Build Steps Performed
+
+1. `apt-get install -y ant` (for LmcpGen)
+2. `./anod build uxas-lmcp` (LMCP code generation - with manual patch fixes for pugixml/serial)
+3. Modified Makefile: C++11 -> C++17
+4. Modified anod specs: removed boost/sqlite download deps
+5. `make -j all` (72 seconds, successful)
+6. Verified: `obj/cpp/uxas` binary exists and runs
+
+### Tests Performed
+
+- HelloWorld example: message exchange OK
+- WaterwaySearch example: service initialization + DB creation OK
+- ARV integration test: AutomationRequest validation OK
+- All 3 tests passed
+
+### Known Issues
+
+- AMASE GUI cannot run in headless environment (requires X11)
+- pugixml and serial anod specs required manual patching (double-patch issue)
+- Network-restricted environment: cannot download boost/sqlite tarballs via anod

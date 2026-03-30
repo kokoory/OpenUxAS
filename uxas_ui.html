@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenUxAS Control Panel</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;display:flex;height:100vh;background:#f0f2f5;color:#333}
+.sidebar{width:220px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;display:flex;flex-direction:column}
+.sidebar h1{font-size:1.1em;padding:0 16px 16px;border-bottom:1px solid #334155;margin-bottom:8px}
+.sidebar h1 span{color:#60a5fa;font-size:0.8em;display:block;margin-top:4px}
+.nav-item{padding:10px 20px;cursor:pointer;font-size:0.9em;border-left:3px solid transparent;transition:all 0.2s}
+.nav-item:hover{background:#334155}
+.nav-item.active{background:#334155;border-left-color:#60a5fa;color:#60a5fa}
+.nav-item .icon{margin-right:8px}
+.main{flex:1;overflow-y:auto;padding:24px}
+.tab{display:none}
+.tab.active{display:block}
+.card{background:#fff;border-radius:8px;padding:16px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,0.1)}
+.card h3{margin-bottom:12px;font-size:1em;color:#1e293b}
+.btn{padding:8px 16px;border:none;border-radius:6px;cursor:pointer;font-size:0.85em;font-weight:500;transition:background 0.2s}
+.btn-blue{background:#3b82f6;color:#fff}.btn-blue:hover{background:#2563eb}
+.btn-green{background:#22c55e;color:#fff}.btn-green:hover{background:#16a34a}
+.btn-red{background:#ef4444;color:#fff}.btn-red:hover{background:#dc2626}
+.btn-gray{background:#64748b;color:#fff}.btn-gray:hover{background:#475569}
+.btn-yellow{background:#eab308;color:#333}.btn-yellow:hover{background:#ca8a04}
+.btn-sm{padding:4px 10px;font-size:0.8em}
+input[type=number],input[type=text],select,textarea{padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85em;width:100%}
+textarea{font-family:'Courier New',monospace;resize:vertical}
+label{display:block;font-size:0.82em;color:#64748b;margin-bottom:4px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.flex{display:flex;gap:8px;align-items:center}
+.flex-wrap{flex-wrap:wrap}
+.mt{margin-top:12px}
+.mb{margin-bottom:12px}
+.status-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.status-dot.on{background:#22c55e}.status-dot.off{background:#ef4444}
+.console{background:#0f172a;color:#a3e635;padding:12px;border-radius:6px;font-family:'Courier New',monospace;font-size:0.8em;height:300px;overflow-y:auto;white-space:pre-wrap}
+.pipeline-box{display:inline-block;padding:6px 12px;border-radius:6px;font-size:0.75em;text-align:center;color:#fff;min-width:80px}
+.pipeline-box.on{background:#3b82f6}.pipeline-box.off{background:#94a3b8;opacity:0.5}
+.pipeline-arrow{color:#94a3b8;font-size:1.2em;padding:0 4px}
+.subtab{padding:6px 14px;background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;font-size:0.85em}
+.subtab.active{border-bottom-color:#3b82f6;font-weight:bold;color:#3b82f6}
+table{width:100%;border-collapse:collapse;font-size:0.82em}
+th{background:#f1f5f9;padding:8px;text-align:left;border:1px solid #e2e8f0}
+td{padding:6px 8px;border:1px solid #e2e8f0}
+.toast{position:fixed;top:20px;right:20px;z-index:9999;padding:10px 20px;border-radius:6px;color:#fff;font-size:0.85em;box-shadow:0 4px 12px rgba(0,0,0,0.2);transition:opacity 0.4s}
+.border-blue{border-left:4px solid #3b82f6}
+.border-green{border-left:4px solid #22c55e}
+.border-yellow{border-left:4px solid #eab308}
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+  <h1>OpenUxAS <span>Control Panel v3.2</span></h1>
+  <div class="nav-item active" onclick="switchTab('dashboard')"><span class="icon">■</span> Dashboard</div>
+  <div class="nav-item" onclick="switchTab('run')"><span class="icon">▶</span> Run Control</div>
+  <div class="nav-item" onclick="switchTab('input')"><span class="icon">◆</span> Input Config</div>
+  <div class="nav-item" onclick="switchTab('algorithm')"><span class="icon">◈</span> Algorithm</div>
+  <div class="nav-item" onclick="switchTab('output')"><span class="icon">◇</span> Results</div>
+  <div class="nav-item" onclick="switchTab('xml')"><span class="icon">◻</span> XML Editor</div>
+  <div style="margin-top:auto;padding:16px;font-size:0.7em;color:#64748b">
+    <div>UxAS Binary: <span id="bin-status" style="color:#ef4444">checking...</span></div>
+    <div class="mt"><span class="status-dot off" id="run-dot"></span> <span id="run-label">Stopped</span></div>
+  </div>
+</div>
+
+<div class="main">
+<!-- ===== DASHBOARD TAB ===== -->
+<div id="tab-dashboard" class="tab active">
+  <h2>Dashboard</h2>
+  <div class="grid3 mb">
+    <div class="card"><h3>Status</h3><div class="flex"><span class="status-dot off" id="dash-dot"></span><span id="dash-status" style="font-size:1.2em;font-weight:bold">STOPPED</span></div></div>
+    <div class="card"><h3>Entity ID</h3><div id="dash-entity" style="font-size:1.4em;font-weight:bold">100</div></div>
+    <div class="card"><h3>Services</h3><div id="dash-services" style="font-size:1.4em;font-weight:bold">0</div></div>
+  </div>
+  <div class="card">
+    <h3>Quick Start</h3>
+    <div class="flex flex-wrap">
+      <select id="example-select" style="min-width:250px"><option value="">-- Select Example --</option></select>
+      <button class="btn btn-green" onclick="quickStart()">Start</button>
+      <button class="btn btn-red" onclick="doStop()">Stop</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Pipeline Overview</h3>
+    <div class="flex flex-wrap" style="justify-content:center;padding:10px">
+      <div class="pipeline-box on">Validator</div><span class="pipeline-arrow">-></span>
+      <div class="pipeline-box on">TaskMgr</div><span class="pipeline-arrow">-></span>
+      <div class="pipeline-box on">RouteAgg</div><span class="pipeline-arrow">-></span>
+      <div class="pipeline-box on">Planner</div><span class="pipeline-arrow">-></span>
+      <div class="pipeline-box on">B&amp;B</div><span class="pipeline-arrow">-></span>
+      <div class="pipeline-box on">PlanBuilder</div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Recent Output</h3>
+    <div class="console" id="dash-console" style="height:150px">Ready.\n</div>
+  </div>
+</div>
+
+<!-- ===== RUN CONTROL TAB ===== -->
+<div id="tab-run" class="tab">
+  <h2>Run Control</h2>
+  <div class="card">
+    <h3>Configuration</h3>
+    <div class="grid2">
+      <div><label>Example</label><select id="run-example" style="width:100%"><option value="">-- Select --</option></select></div>
+      <div><label>Entity ID</label><input type="number" id="entity-id" value="100"></div>
+      <div><label>Run Duration (s)</label><input type="number" id="run-duration" value="10" min="1" step="1"></div>
+      <div><label>Config Path (override)</label><input type="text" id="config-path" placeholder="auto-detected from example"></div>
+    </div>
+    <div class="flex mt">
+      <button class="btn btn-green" onclick="doStart()">Start UxAS</button>
+      <button class="btn btn-red" onclick="doStop()">Stop UxAS</button>
+      <button class="btn btn-blue" onclick="doRunCustom()">Run Custom Config</button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Console Output</h3>
+    <div class="flex mb">
+      <button class="btn btn-sm btn-gray" onclick="clearConsole()">Clear</button>
+      <button class="btn btn-sm btn-gray" onclick="exportLog()">Export Log</button>
+    </div>
+    <div class="console" id="run-console">Waiting for UxAS...\n</div>
+  </div>
+</div>
+<!-- ===== INPUT CONFIG TAB ===== -->
+<div id="tab-input" class="tab">
+  <h2>Input Configuration</h2>
+
+  <!-- Vehicles -->
+  <div class="card border-blue">
+    <div class="flex" style="justify-content:space-between"><h3>Vehicles (AirVehicleConfiguration)</h3><button class="btn btn-sm btn-blue" onclick="addVehicle()">+ Add Vehicle</button></div>
+    <div id="vehicles-container"></div>
+  </div>
+
+  <!-- Tasks -->
+  <div class="card border-green">
+    <div class="flex" style="justify-content:space-between">
+      <h3>Tasks</h3>
+      <div class="flex">
+        <select id="task-type-select">
+          <option>AreaSearchTask</option><option>LineSearchTask</option><option>PointSearchTask</option>
+          <option>BlockadeTask</option><option>CordonTask</option><option>EscortTask</option>
+          <option>LoiterTask</option><option>MustFlyTask</option><option>CommRelayTask</option>
+          <option>OverwatchTask</option><option>PatternSearchTask</option>
+        </select>
+        <button class="btn btn-sm btn-green" onclick="addTask()">+ Add Task</button>
+      </div>
+    </div>
+    <div id="tasks-container"></div>
+  </div>
+
+  <!-- Zones -->
+  <div class="card border-yellow">
+    <h3>Zones</h3>
+    <div class="grid2">
+      <div>
+        <label>KeepInZone</label>
+        <div id="keepin-container"><div class="flex mb"><input type="text" placeholder="Lat,Lng points (e.g. 45.3,-121.0;45.4,-121.0;45.4,-120.9;45.3,-120.9)" id="keepin-points"><button class="btn btn-sm btn-blue" onclick="addZone('keepin')">Add</button></div></div>
+      </div>
+      <div>
+        <label>KeepOutZone</label>
+        <div id="keepout-container"><div class="flex mb"><input type="text" placeholder="Lat,Lng points" id="keepout-points"><button class="btn btn-sm btn-red" onclick="addZone('keepout')">Add</button></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex mt">
+    <button class="btn btn-blue" onclick="generateAll()">Generate All XML</button>
+    <button class="btn btn-green" onclick="validateAll()">Validate Config</button>
+    <button class="btn btn-yellow" onclick="generateRequest()">Generate AutomationRequest</button>
+  </div>
+</div>
+<!-- ===== ALGORITHM TAB ===== -->
+<div id="tab-algorithm" class="tab">
+  <h2>Algorithm Settings</h2>
+  <div class="card">
+    <h3>Service Pipeline</h3>
+    <div id="svc-pipeline">
+      <div class="mb"><label><input type="checkbox" id="svc-arv" checked> AutomationRequestValidatorService</label><div class="grid2 mt"><div><label>MaxResponseTime_ms</label><input type="number" id="arv-timeout" value="5000"></div></div></div>
+      <div class="mb"><label><input type="checkbox" id="svc-taskmgr" checked> TaskManagerService</label></div>
+      <div class="mb"><label><input type="checkbox" id="svc-planner" checked> RoutePlannerVisibilityService</label><div class="grid2 mt"><div><label>TurnRadiusOffset_m</label><input type="number" id="rp-turn" value="0" step="0.1"></div><div><label>MinWaypointSeparation_m</label><input type="number" id="rp-sep" value="50" step="1"></div></div></div>
+      <div class="mb"><label><input type="checkbox" id="svc-routeagg" checked> RouteAggregatorService</label></div>
+      <div class="mb"><label><input type="checkbox" id="svc-atbb" checked> AssignmentTreeBranchBoundService</label><div class="grid2 mt"><div><label>NumberNodesMaximum (0=unlimited)</label><input type="number" id="atbb-nodes" value="0"></div><div><label>CostFunction</label><select id="atbb-cost"><option value="MINMAX">MINMAX</option><option value="CUMULATIVE">CUMULATIVE</option></select></div></div></div>
+      <div class="mb"><label><input type="checkbox" id="svc-planbuilder" checked> PlanBuilderService</label><div class="grid2 mt"><div><label>AssignmentStartPointLead_m</label><input type="number" id="pb-lead" value="0" step="0.1"></div></div></div>
+      <div class="mb"><label><input type="checkbox" id="svc-sensor" checked> SensorManagerService</label></div>
+      <div class="mb"><label><input type="checkbox" id="svc-batch" checked> BatchSummaryService</label></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>WaypointPlanManager</h3>
+    <div class="grid3">
+      <div><label>WaypointsToServe</label><input type="number" id="wp-serve" value="15"></div>
+      <div><label>WaypointsOverlap</label><input type="number" id="wp-overlap" value="5"></div>
+      <div><label>LoiterRadius_m</label><input type="number" id="wp-loiter" value="250"></div>
+      <div><label>TurnType</label><select id="wp-turn"><option>FlyOver</option><option>TurnShort</option></select></div>
+      <div><label>GimbalPayloadId</label><input type="number" id="wp-gimbal" value="1"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Validation</h3>
+    <button class="btn btn-green" onclick="validateAll()">Validate Configuration</button>
+    <div id="validation-result" class="console mt" style="height:100px;background:#1e293b">Click validate to check.</div>
+  </div>
+</div>
+
+<!-- ===== OUTPUT TAB ===== -->
+<div id="tab-output" class="tab">
+  <h2>Results &amp; Analysis</h2>
+  <div class="flex mb">
+    <select id="output-example" style="min-width:250px"><option value="">-- Select Run --</option></select>
+    <button class="btn btn-blue" onclick="loadOutputs()">Load</button>
+    <button class="btn btn-green" onclick="exportCsv()">Export CSV</button>
+  </div>
+  <div class="flex mb">
+    <button class="subtab active" id="otab-msg" onclick="switchOutputSub('msg')">Messages</button>
+    <button class="subtab" id="otab-db" onclick="switchOutputSub('db')">Database</button>
+    <button class="subtab" id="otab-sum" onclick="switchOutputSub('sum')">Summary</button>
+  </div>
+  <div id="osub-msg">
+    <table><thead><tr><th>Time</th><th>Type</th><th>Source</th><th>Content</th></tr></thead><tbody id="msg-tbody"><tr><td colspan="4" style="text-align:center;color:#94a3b8">No messages loaded</td></tr></tbody></table>
+  </div>
+  <div id="osub-db" style="display:none">
+    <div class="flex mb"><label>Table:</label><select id="db-table" onchange="loadDbTable()"><option>--</option></select></div>
+    <table><thead id="db-thead"><tr><th>Select a table</th></tr></thead><tbody id="db-tbody"><tr><td style="text-align:center;color:#94a3b8">No data</td></tr></tbody></table>
+  </div>
+  <div id="osub-sum" style="display:none">
+    <h3>Assignments</h3>
+    <table><thead><tr><th>Vehicle</th><th>Task</th><th>Cost</th></tr></thead><tbody id="asg-tbody"><tr><td colspan="3" style="text-align:center;color:#94a3b8">No data</td></tr></tbody></table>
+    <h3 class="mt">Waypoints</h3>
+    <table><thead><tr><th>ID</th><th>Lat</th><th>Lng</th><th>Alt</th><th>Speed</th></tr></thead><tbody id="wp-tbody"><tr><td colspan="5" style="text-align:center;color:#94a3b8">No data</td></tr></tbody></table>
+  </div>
+</div>
+
+<!-- ===== XML EDITOR TAB ===== -->
+<div id="tab-xml" class="tab">
+  <h2>XML Editor</h2>
+  <div class="card">
+    <div class="flex mb">
+      <select id="xml-file" style="min-width:250px"><option value="">-- Select file --</option></select>
+      <button class="btn btn-sm btn-gray" onclick="loadXmlFile()">Load</button>
+      <button class="btn btn-sm btn-green" onclick="saveXml()">Save</button>
+      <button class="btn btn-sm btn-blue" onclick="applyRun()">Apply &amp; Run</button>
+      <button class="btn btn-sm btn-yellow" onclick="validateXml()">Validate</button>
+    </div>
+    <div id="xml-msg" style="display:none;padding:8px;border-radius:4px;margin-bottom:8px;font-size:0.85em"></div>
+    <textarea id="xml-editor" style="height:500px;background:#0f172a;color:#a3e635" spellcheck="false"></textarea>
+  </div>
+  <div class="card">
+    <h3>Generated Preview</h3>
+    <div class="flex mb">
+      <button class="subtab active" id="ptab-cfg" onclick="switchPreview('cfg')">Config</button>
+      <button class="subtab" id="ptab-veh" onclick="switchPreview('veh')">Vehicle</button>
+      <button class="subtab" id="ptab-tsk" onclick="switchPreview('tsk')">Task</button>
+      <button class="subtab" id="ptab-req" onclick="switchPreview('req')">Request</button>
+    </div>
+    <div id="prev-cfg" class="console" style="height:200px">Click "Generate All XML" in Input tab.</div>
+    <div id="prev-veh" class="console" style="height:200px;display:none"></div>
+    <div id="prev-tsk" class="console" style="height:200px;display:none"></div>
+    <div id="prev-req" class="console" style="height:200px;display:none"></div>
+    <button class="btn btn-blue mt" onclick="generateAll()" style="width:100%">Generate Full Config</button>
+  </div>
+</div>
+<script>
+// === State ===
+let S={running:false,vid:400,tid:1,refreshId:null};
+
+// === API ===
+async function api(url,data){
+  try{
+    const o=data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{};
+    const r=await fetch(url,o);
+    return await r.json();
+  }catch(e){toast(e.message,'red');return{};}
+}
+
+// === Toast ===
+function toast(msg,bg='#3b82f6'){
+  const d=document.createElement('div');
+  d.className='toast';d.style.background=bg;d.textContent=msg;
+  document.body.appendChild(d);
+  setTimeout(()=>{d.style.opacity='0';setTimeout(()=>d.remove(),400)},3000);
+}
+
+// === Tab Switch ===
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  const tab=document.getElementById('tab-'+name);
+  if(tab)tab.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n=>{if(n.onclick&&n.onclick.toString().includes(name))n.classList.add('active');});
+}
+
+// === Init ===
+document.addEventListener('DOMContentLoaded',async()=>{
+  const d=await api('/api/examples');
+  const exs=d.examples||[];
+  ['example-select','run-example','output-example'].forEach(id=>{
+    const sel=document.getElementById(id);
+    if(!sel)return;
+    exs.forEach(e=>{const o=document.createElement('option');o.value=e.path;o.textContent=e.name;sel.appendChild(o);});
+  });
+  // xml file list
+  const xsel=document.getElementById('xml-file');
+  if(xsel)exs.forEach(e=>(e.configs||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;xsel.appendChild(o);}));
+  // bin status
+  const bs=document.getElementById('bin-status');
+  if(bs){const st=await api('/api/status');bs.textContent=st.pid?'found':'ready';bs.style.color='#22c55e';}
+  checkStatus();
+  S.refreshId=setInterval(checkStatus,3000);
+  addVehicle();addTask();
+});
+
+// === Status Check ===
+async function checkStatus(){
+  const d=await api('/api/status');
+  S.running=d.running||false;
+  ['dash-dot','run-dot'].forEach(id=>{const e=document.getElementById(id);if(e){e.className='status-dot '+(S.running?'on':'off');}});
+  const ds=document.getElementById('dash-status');if(ds)ds.textContent=S.running?'RUNNING':'STOPPED';
+  const rl=document.getElementById('run-label');if(rl)rl.textContent=S.running?'Running':'Stopped';
+  if(S.running){const o=await api('/api/output');
+    ['dash-console','run-console'].forEach(id=>{const e=document.getElementById(id);if(e&&o.output){e.textContent+=o.output;e.scrollTop=e.scrollHeight;}});
+  }
+}
+
+// === Start/Stop ===
+async function quickStart(){
+  const ex=document.getElementById('example-select')?.value;
+  if(!ex){toast('Select an example','#eab308');return;}
+  toast('Starting...');
+  const r=await api('/api/start',{configPath:ex,example:ex});
+  toast(r.message||'Started','#22c55e');
+}
+async function doStart(){
+  const ex=document.getElementById('run-example')?.value||'';
+  const cp=document.getElementById('config-path')?.value||'';
+  const dur=document.getElementById('run-duration')?.value;
+  const r=await api('/api/start',{configPath:cp||ex,example:ex,runDuration:dur});
+  toast(r.message||'Started','#22c55e');
+}
+async function doStop(){
+  const r=await api('/api/stop',{});
+  toast(r.message||'Stopped','#ef4444');
+}
+async function doRunCustom(){
+  const cfg=buildConfig();
+  toast('Running custom...','#3b82f6');
+  const r=await api('/api/run/custom',cfg);
+  toast(r.message||'Done','#22c55e');
+}
+function clearConsole(){['dash-console','run-console'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='';});}
+function exportLog(){
+  const e=document.getElementById('run-console');
+  const b=new Blob([e?.textContent||''],{type:'text/plain'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='uxas_log.txt';a.click();
+}
+
+// === Vehicles ===
+function addVehicle(){
+  const id=S.vid;S.vid+=100;
+  const c=document.getElementById('vehicles-container');if(!c)return;
+  const d=document.createElement('div');d.className='card mb';d.id='v-'+id;
+  d.innerHTML=`<div class="flex" style="justify-content:space-between"><strong>Vehicle ${id}</strong><button class="btn btn-sm btn-red" onclick="this.closest('.card').remove()">X</button></div>
+<div class="grid2 mt">
+<div><label>ID</label><input type="number" class="vid" value="${id}"></div>
+<div><label>Label</label><input type="text" class="vlbl" value="UAV${id}"></div>
+<div><label>Min Speed m/s</label><input type="number" class="vmin" value="18" step="0.5"></div>
+<div><label>Max Speed m/s</label><input type="number" class="vmax" value="33" step="0.5"></div>
+<div><label>Nominal Speed m/s</label><input type="number" class="vnom" value="22" step="0.5"></div>
+<div><label>Altitude m</label><input type="number" class="valt" value="700"></div>
+<div><label>Latitude</label><input type="number" class="vlat" value="45.3171" step="0.0001"></div>
+<div><label>Longitude</label><input type="number" class="vlng" value="-120.9724" step="0.0001"></div>
+<div><label>Heading deg</label><input type="number" class="vhdg" value="0"></div>
+<div><label>EnergyRate</label><input type="number" class="venr" value="0.000278" step="0.0001"></div>
+</div>`;
+  c.appendChild(d);
+}
+function getVehicles(){
+  return [...document.querySelectorAll('#vehicles-container .card')].map(c=>({
+    id:+(c.querySelector('.vid')?.value)||0,label:c.querySelector('.vlbl')?.value||'',
+    minSpeed:+(c.querySelector('.vmin')?.value)||0,maxSpeed:+(c.querySelector('.vmax')?.value)||0,
+    nominalSpeed:+(c.querySelector('.vnom')?.value)||0,altitude:+(c.querySelector('.valt')?.value)||0,
+    latitude:+(c.querySelector('.vlat')?.value)||0,longitude:+(c.querySelector('.vlng')?.value)||0,
+    heading:+(c.querySelector('.vhdg')?.value)||0,energyRate:+(c.querySelector('.venr')?.value)||0
+  }));
+}
+
+// === Tasks ===
+function addTask(){
+  const type=document.getElementById('task-type-select')?.value||'AreaSearchTask';
+  const tid=S.tid++;
+  const c=document.getElementById('tasks-container');if(!c)return;
+  const needPts=['AreaSearchTask','LineSearchTask','PatternSearchTask','BlockadeTask','CordonTask'].includes(type);
+  const d=document.createElement('div');d.className='card mb';d.id='t-'+tid;
+  let h=`<div class="flex" style="justify-content:space-between"><strong>${type} #${tid}</strong><button class="btn btn-sm btn-red" onclick="this.closest('.card').remove()">X</button></div>
+<input type="hidden" class="ttype" value="${type}">
+<div class="grid2 mt">
+<div><label>Task ID</label><input type="number" class="ttid" value="${tid}"></div>
+<div><label>Label</label><input type="text" class="tlbl" value="${type}_${tid}"></div>
+<div><label>Eligible Entities (comma)</label><input type="text" class="tent" placeholder="all"></div>
+<div><label>GroundSampleDist m</label><input type="number" class="tgsd" value="25"></div>`;
+  if(type==='PointSearchTask')h+=`<div><label>Latitude</label><input type="number" class="tplat" value="45.32" step="0.0001"></div><div><label>Longitude</label><input type="number" class="tplng" value="-120.97" step="0.0001"></div>`;
+  h+=`</div>`;
+  if(needPts)h+=`<div class="mt"><label><strong>Points:</strong></label><div class="tpts"></div><button class="btn btn-sm btn-gray mt" onclick="addPt(this)">+ Point</button></div>`;
+  d.innerHTML=h;
+  c.appendChild(d);
+  if(needPts){addPt(d.querySelector('.btn-gray'));addPt(d.querySelector('.btn-gray'));addPt(d.querySelector('.btn-gray'));}
+}
+function addPt(btn){
+  const container=btn.parentElement.querySelector('.tpts');if(!container)return;
+  const div=document.createElement('div');div.className='flex mb';
+  div.innerHTML=`<input type="number" class="ptlat" value="45.32" step="0.0001" style="width:140px" placeholder="Lat">
+<input type="number" class="ptlng" value="-120.97" step="0.0001" style="width:140px" placeholder="Lng">
+<button class="btn btn-sm btn-red" onclick="this.parentElement.remove()">X</button>`;
+  container.appendChild(div);
+}
+function getTasks(){
+  return [...document.querySelectorAll('#tasks-container .card')].map(c=>{
+    const t={type:c.querySelector('.ttype')?.value||'',id:+(c.querySelector('.ttid')?.value)||0,
+      label:c.querySelector('.tlbl')?.value||'',
+      eligibleEntities:(c.querySelector('.tent')?.value||'').split(',').map(s=>s.trim()).filter(Boolean),
+      points:[...c.querySelectorAll('.tpts .flex')].map(r=>({lat:+(r.querySelector('.ptlat')?.value)||0,lng:+(r.querySelector('.ptlng')?.value)||0}))};
+    if(c.querySelector('.tplat'))t.latitude=+(c.querySelector('.tplat').value);
+    if(c.querySelector('.tplng'))t.longitude=+(c.querySelector('.tplng').value);
+    return t;
+  });
+}
+
+// === Build Config ===
+function buildConfig(){
+  return{
+    entityId:+(document.getElementById('entity-id')?.value)||100,
+    runDuration:+(document.getElementById('run-duration')?.value)||10,
+    vehicles:getVehicles(),tasks:getTasks(),
+    algorithm:{
+      services:{
+        arv:{enabled:document.getElementById('svc-arv')?.checked,maxResponseTime:+(document.getElementById('arv-timeout')?.value)||5000},
+        taskManager:{enabled:document.getElementById('svc-taskmgr')?.checked},
+        routePlanner:{enabled:document.getElementById('svc-planner')?.checked,turnRadiusOffset:+(document.getElementById('rp-turn')?.value)||0,minWaypointSeparation:+(document.getElementById('rp-sep')?.value)||50},
+        routeAggregator:{enabled:document.getElementById('svc-routeagg')?.checked},
+        atbb:{enabled:document.getElementById('svc-atbb')?.checked,maxNodes:+(document.getElementById('atbb-nodes')?.value)||0,costFunction:document.getElementById('atbb-cost')?.value||'MINMAX'},
+        planBuilder:{enabled:document.getElementById('svc-planbuilder')?.checked,assignmentStartPointLead:+(document.getElementById('pb-lead')?.value)||0},
+        sensorManager:{enabled:document.getElementById('svc-sensor')?.checked},
+        batchSummary:{enabled:document.getElementById('svc-batch')?.checked}
+      },
+      waypointManager:{numServe:+(document.getElementById('wp-serve')?.value)||15,numOverlap:+(document.getElementById('wp-overlap')?.value)||5,loiterRadius:+(document.getElementById('wp-loiter')?.value)||250,turnType:document.getElementById('wp-turn')?.value||'FlyOver',gimbalPayloadId:+(document.getElementById('wp-gimbal')?.value)||1},
+      logging:{enabled:true,messageCountLimit:1000,filesPerSubDir:1000}
+    }
+  };
+}
+
+// === Generate ===
+async function generateAll(){
+  const cfg=buildConfig();
+  const r=await api('/api/generate/config',cfg);
+  const xml=r.xml||'Error generating';
+  document.getElementById('prev-cfg').textContent=xml;
+  document.getElementById('xml-editor').value=xml;
+  switchTab('xml');switchPreview('cfg');
+  toast('Config generated','#22c55e');
+}
+async function generateRequest(){
+  const r=await api('/api/generate/request',{entityIds:getVehicles().map(v=>v.id),taskIds:getTasks().map(t=>t.id)});
+  document.getElementById('prev-req').textContent=r.xml||'Error';
+  switchPreview('req');toast('Request generated','#22c55e');
+}
+
+// === Validate ===
+async function validateAll(){
+  const cfg=buildConfig();
+  const r=await api('/api/validate',cfg);
+  const el=document.getElementById('validation-result');
+  if(el){
+    if(r.valid){el.style.color='#22c55e';el.textContent='Valid!\n'+(r.errors||[]).filter(e=>e.startsWith('Warning')).join('\n');}
+    else{el.style.color='#ef4444';el.textContent='Errors:\n'+(r.errors||[]).join('\n');}
+  }
+  toast(r.valid?'Valid':'Has errors',r.valid?'#22c55e':'#ef4444');
+}
+
+// === Output ===
+function switchOutputSub(name){
+  ['msg','db','sum'].forEach(t=>{
+    const e=document.getElementById('osub-'+t);if(e)e.style.display=t===name?'block':'none';
+    const b=document.getElementById('otab-'+t);if(b)b.classList.toggle('active',t===name);
+  });
+}
+async function loadOutputs(){
+  const ex=document.getElementById('output-example')?.value;
+  if(!ex){toast('Select a run','#eab308');return;}
+  const d=await api('/api/outputs?path='+encodeURIComponent(ex));
+  const mb=document.getElementById('msg-tbody');
+  if(mb&&d.messages?.length){
+    mb.innerHTML=d.messages.map(m=>`<tr><td>${esc(m.time)}</td><td>${esc(m.type)}</td><td>${esc(m.source)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.content)}</td></tr>`).join('');
+  }
+  if(d.dbTables){
+    const s=document.getElementById('db-table');
+    if(s){s.innerHTML='<option>--</option>';d.dbTables.forEach(t=>{const o=document.createElement('option');o.value=t;o.textContent=t;s.appendChild(o);});}
+  }
+  toast('Loaded','#22c55e');
+}
+async function loadDbTable(){
+  const ex=document.getElementById('output-example')?.value||'';
+  const tb=document.getElementById('db-table')?.value||'';
+  if(!tb||tb==='--')return;
+  const d=await api('/api/logdb?path='+encodeURIComponent(ex)+'&table='+encodeURIComponent(tb));
+  const th=document.getElementById('db-thead');
+  const tbody=document.getElementById('db-tbody');
+  if(th&&d.columns)th.innerHTML='<tr>'+d.columns.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>';
+  if(tbody&&d.rows)tbody.innerHTML=d.rows.map(r=>'<tr>'+(d.columns||[]).map(c=>'<td>'+esc(String(r[c]??''))+'</td>').join('')+'</tr>').join('')||'<tr><td colspan="99" style="text-align:center;color:#94a3b8">No rows</td></tr>';
+}
+function exportCsv(){
+  let csv='';
+  document.querySelectorAll('#msg-tbody tr').forEach(r=>{
+    csv+=[...r.querySelectorAll('td')].map(c=>'"'+c.textContent.replace(/"/g,'""')+'"').join(',')+'\n';
+  });
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='uxas_output.csv';a.click();
+  toast('Exported','#22c55e');
+}
+
+// === XML Editor ===
+async function loadXmlFile(){
+  const f=document.getElementById('xml-file')?.value;
+  if(!f)return;
+  const d=await api('/api/file?path='+encodeURIComponent(f));
+  document.getElementById('xml-editor').value=d.content||d.error||'';
+}
+async function saveXml(){
+  const f=document.getElementById('xml-file')?.value;const c=document.getElementById('xml-editor')?.value;
+  if(!f){toast('Select a file','#eab308');return;}
+  await api('/api/save',{path:f,content:c});toast('Saved','#22c55e');
+}
+async function applyRun(){
+  await saveXml();
+  const f=document.getElementById('xml-file')?.value;
+  if(!f)return;
+  await api('/api/start',{configPath:f});toast('Applied & started','#22c55e');
+}
+function validateXml(){
+  const el=document.getElementById('xml-msg');const v=document.getElementById('xml-editor')?.value||'';
+  if(!el)return;el.style.display='block';
+  try{
+    const p=new DOMParser();const d=p.parseFromString(v,'application/xml');
+    if(d.querySelector('parsererror')){el.style.background='#fecaca';el.style.color='#991b1b';el.textContent='XML Error: '+d.querySelector('parsererror').textContent;}
+    else{el.style.background='#bbf7d0';el.style.color='#166534';el.textContent='Valid XML: <'+d.documentElement.tagName+'>';}
+  }catch(e){el.style.background='#fecaca';el.style.color='#991b1b';el.textContent=e.message;}
+}
+function switchPreview(name){
+  ['cfg','veh','tsk','req'].forEach(t=>{
+    const e=document.getElementById('prev-'+t);if(e)e.style.display=t===name?'block':'none';
+    const b=document.getElementById('ptab-'+t);if(b)b.classList.toggle('active',t===name);
+  });
+}
+
+// === Zones (placeholder) ===
+function addZone(type){toast('Zone added ('+type+')','#3b82f6');}
+
+// === Util ===
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
+</script>
+</div><!-- end .main -->
+</body>
+</html>
