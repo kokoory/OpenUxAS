@@ -300,7 +300,7 @@ function switchTab(name){
 // === Init ===
 document.addEventListener('DOMContentLoaded',async()=>{
   const d=await api('/api/examples');
-  const exs=d.examples||[];
+  const exs=Array.isArray(d)?d:(d.examples||[]);
   ['example-select','run-example','output-example'].forEach(id=>{
     const sel=document.getElementById(id);
     if(!sel)return;
@@ -308,7 +308,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   });
   // xml file list
   const xsel=document.getElementById('xml-file');
-  if(xsel)exs.forEach(e=>(e.configs||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;xsel.appendChild(o);}));
+  if(xsel)exs.forEach(e=>(e.cfg_files||e.configs||[]).forEach(c=>{const o=document.createElement('option');o.value=e.path+'/'+c;o.textContent=e.name+'/'+c;xsel.appendChild(o);}));
   // bin status
   const bs=document.getElementById('bin-status');
   if(bs){const st=await api('/api/status');bs.textContent=st.pid?'found':'ready';bs.style.color='#22c55e';}
@@ -325,7 +325,8 @@ async function checkStatus(){
   const ds=document.getElementById('dash-status');if(ds)ds.textContent=S.running?'RUNNING':'STOPPED';
   const rl=document.getElementById('run-label');if(rl)rl.textContent=S.running?'Running':'Stopped';
   if(S.running){const o=await api('/api/output');
-    ['dash-console','run-console'].forEach(id=>{const e=document.getElementById(id);if(e&&o.output){e.textContent+=o.output;e.scrollTop=e.scrollHeight;}});
+    const txt=(o.lines||[]).join('\n')||o.output||'';
+    ['dash-console','run-console'].forEach(id=>{const e=document.getElementById(id);if(e&&txt){e.textContent=txt;e.scrollTop=e.scrollHeight;}});
   }
 }
 
@@ -334,8 +335,10 @@ async function quickStart(){
   const ex=document.getElementById('example-select')?.value;
   if(!ex){toast('Select an example','#eab308');return;}
   toast('Starting...');
-  const r=await api('/api/start',{configPath:ex,example:ex});
-  toast(r.message||'Started','#22c55e');
+  // Extract example name from path (e.g. "/path/to/examples/01_HelloWorld" -> "01_HelloWorld")
+  const name=ex.split('/').pop();
+  const r=await api('/api/run/example',{name:name});
+  toast(r.message||r.error||'Started','#22c55e');
 }
 async function doStart(){
   const ex=document.getElementById('run-example')?.value||'';
@@ -349,9 +352,15 @@ async function doStop(){
   toast(r.message||'Stopped','#ef4444');
 }
 async function doRunCustom(){
+  // First generate config XML, then use /api/start
   const cfg=buildConfig();
-  toast('Running custom...','#3b82f6');
-  const r=await api('/api/run/custom',cfg);
+  toast('Generating config...','#3b82f6');
+  const gen=await api('/api/generate/config',cfg);
+  if(!gen.xml){toast('Config generation failed','#ef4444');return;}
+  // Save to custom_run/cfg_custom.xml
+  await api('/api/save',{path:'custom_run/cfg_custom.xml',content:gen.xml});
+  toast('Starting custom run...','#3b82f6');
+  const r=await api('/api/start',{configPath:'custom_run/cfg_custom.xml'});
   toast(r.message||'Done','#22c55e');
 }
 function clearConsole(){['dash-console','run-console'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='';});}
@@ -493,7 +502,7 @@ function switchOutputSub(name){
 async function loadOutputs(){
   const ex=document.getElementById('output-example')?.value;
   if(!ex){toast('Select a run','#eab308');return;}
-  const d=await api('/api/outputs?path='+encodeURIComponent(ex));
+  const d=await api('/api/outputs?example='+encodeURIComponent(ex));
   const mb=document.getElementById('msg-tbody');
   if(mb&&d.messages?.length){
     mb.innerHTML=d.messages.map(m=>`<tr><td>${esc(m.time)}</td><td>${esc(m.type)}</td><td>${esc(m.source)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.content)}</td></tr>`).join('');
