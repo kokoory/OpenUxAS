@@ -308,7 +308,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   });
   // xml file list
   const xsel=document.getElementById('xml-file');
-  if(xsel)exs.forEach(e=>(e.cfg_files||e.configs||[]).forEach(c=>{const o=document.createElement('option');o.value=e.path+'/'+c;o.textContent=e.name+'/'+c;xsel.appendChild(o);}));
+  if(xsel)exs.forEach(e=>(e.cfg_files||e.configs||[]).forEach(c=>{const p='examples/'+e.name+'/'+c;const o=document.createElement('option');o.value=p;o.textContent=e.name+'/'+c;xsel.appendChild(o);}));
   // bin status
   const bs=document.getElementById('bin-status');
   if(bs){const st=await api('/api/status');bs.textContent=st.pid?'found':'ready';bs.style.color='#22c55e';}

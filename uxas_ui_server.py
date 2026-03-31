@@ -51,7 +51,7 @@ def list_examples():
                 has_yaml = os.path.isfile(yaml_file)
                 examples.append({
                     "name": name,
-                    "path": path,
+                    "path": name,
                     "cfg_files": [os.path.basename(f) for f in cfg_files],
                     "has_yaml": has_yaml
                 })
@@ -635,6 +635,8 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
 
         elif path == "/api/run/example":
             example_name = data.get("name", "")
+            # Extract just the directory name if full path was sent
+            example_name = os.path.basename(example_name.rstrip("/\\"))
             example_path = os.path.join(EXAMPLES_DIR, example_name)
             if not os.path.isdir(example_path):
                 self._send_json({"error": f"Example not found: {example_name}"}, 404)
