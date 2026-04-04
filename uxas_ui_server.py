@@ -25,9 +25,18 @@ from pathlib import Path
 
 # ── Configuration ──────────────────────────────────────────────────────────
 UXAS_ROOT = os.path.dirname(os.path.abspath(__file__))
-UXAS_BIN = os.path.join(UXAS_ROOT, "obj", "cpp", "uxas")
 EXAMPLES_DIR = os.path.join(UXAS_ROOT, "examples")
 DEFAULT_PORT = 8080
+
+# Auto-detect UxAS binary
+_bin_name = "uxas.exe" if sys.platform == "win32" else "uxas"
+_bin_paths = [
+    os.path.join(UXAS_ROOT, "obj", "cpp", _bin_name),
+    os.path.join(UXAS_ROOT, "src", "cpp", _bin_name),
+    os.path.join(UXAS_ROOT, _bin_name)
+]
+UXAS_BIN = next((p for p in _bin_paths if os.path.isfile(p)), _bin_paths[0])
+
 
 # ── Global State ───────────────────────────────────────────────────────────
 uxas_process = None
@@ -37,6 +46,26 @@ uxas_running = False
 
 
 # ── Helper Functions ───────────────────────────────────────────────────────
+
+def ET_indent(elem, space="    ", level=0):
+    """Fallback for xml.etree.ElementTree.indent (added in Python 3.9)."""
+    if hasattr(ET, 'indent'):
+        ET.indent(elem, space=space)
+        return
+    i = "\n" + level * space
+    if len(elem):
+        if not elem.text or not elem.text.strip():
+            elem.text = i + space
+        if not elem.tail or not elem.tail.strip():
+            elem.tail = i
+        for subelem in elem:
+            ET_indent(subelem, space, level + 1)
+        if not subelem.tail or not subelem.tail.strip():
+            subelem.tail = i
+    else:
+        if level and (not elem.tail or not elem.tail.strip()):
+            elem.tail = i
+
 
 def list_examples():
     """List available example directories."""
@@ -171,7 +200,7 @@ def generate_xml_config(config_data):
             for k, v in lm.items():
                 lm_elem.set(k, str(v))
 
-    ET.indent(root, space="    ")
+    ET_indent(root, space="    ")
     return ET.tostring(root, encoding="unicode", xml_declaration=True)
 
 
@@ -199,7 +228,7 @@ def generate_vehicle_xml(vehicle_data):
     ET.SubElement(root, "AlternateFlightProfiles")
     ET.SubElement(root, "PayloadConfigurationList")
 
-    ET.indent(root, space="    ")
+    ET_indent(root, space="    ")
     return ET.tostring(root, encoding="unicode", xml_declaration=True)
 
 
@@ -228,7 +257,7 @@ def generate_vehicle_state_xml(state_data):
     el = ET.SubElement(root, "Mode")
     el.text = "Waypoint"
 
-    ET.indent(root, space="    ")
+    ET_indent(root, space="    ")
     return ET.tostring(root, encoding="unicode", xml_declaration=True)
 
 
@@ -277,7 +306,7 @@ def generate_task_xml(task_data):
     ET.SubElement(root, "DwellTime").text = str(task_data.get("dwellTime", 0))
     ET.SubElement(root, "GroundSampleDistance").text = str(task_data.get("gsd", 0))
 
-    ET.indent(root, space="    ")
+    ET_indent(root, space="    ")
     return ET.tostring(root, encoding="unicode", xml_declaration=True)
 
 
@@ -294,7 +323,7 @@ def generate_automation_request_xml(request_data):
     for tid in request_data.get("tasks", []):
         t = ET.SubElement(tl, "int64")
         t.text = str(tid)
-    ET.indent(root, space="    ")
+    ET_indent(root, space="    ")
     return ET.tostring(root, encoding="unicode", xml_declaration=True)
 
 
@@ -372,43 +401,103 @@ def get_output():
         }
 
 
-def read_log_database(db_path):
-    """Read messages from a UxAS log database."""
-    results = []
+def read_log_database(db_path, table_name=None):
+    """Read data from a UxAS log database."""
     try:
         conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        # Get table names
+
+        # Get all table names
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = [r[0] for r in cursor.fetchall()]
-        for table in tables:
-            cursor.execute(f"SELECT * FROM [{table}] LIMIT 100")
-            cols = [d[0] for d in cursor.description]
-            for row in cursor.fetchall():
-                results.append({"table": table, "columns": cols,
-                                "data": [str(v) for v in row]})
+
+        if not table_name:
+            conn.close()
+            return {"tables": tables}
+
+        if table_name not in tables:
+            conn.close()
+            return {"error": f"Table {table_name} not found"}
+
+        cursor.execute(f"SELECT * FROM [{table_name}] ORDER BY ROWID DESC LIMIT 1000")
+        rows = cursor.fetchall()
+        if not rows:
+            conn.close()
+            return {"columns": [], "rows": [], "tables": tables}
+
+        columns = list(rows[0].keys())
+        data = []
+        for r in rows:
+            data.append(dict(r))
+
         conn.close()
+        return {"columns": columns, "rows": data, "tables": tables}
     except Exception as e:
-        results.append({"error": str(e)})
-    return results
+        return {"error": str(e)}
 
 
 def find_run_outputs(example_path):
-    """Find output files from a previous run."""
-    outputs = {"databases": [], "logs": [], "xml_files": []}
+    """Find output files from a previous run and extract summary data."""
+    outputs = {
+        "databases": [],
+        "logs": [],
+        "xml_files": [],
+        "dbTables": [],
+        "messages": [],
+        "dbPath": ""
+    }
+
+    found_files = []
     for pattern in ["RUNDIR*", "datawork*", "log*"]:
         for d in glob.glob(os.path.join(example_path, pattern)):
             if os.path.isdir(d):
-                for root_dir, dirs, files in os.walk(d):
+                for root_dir, _, files in os.walk(d):
                     for f in files:
                         fp = os.path.join(root_dir, f)
-                        rel = os.path.relpath(fp, example_path)
-                        if f.endswith('.db') or f.endswith('.db3'):
-                            outputs["databases"].append(rel)
-                        elif f.endswith('.log') or f.endswith('.txt'):
-                            outputs["logs"].append(rel)
-                        elif f.endswith('.xml'):
-                            outputs["xml_files"].append(rel)
+                        found_files.append(fp)
+
+    if not found_files:
+        return outputs
+
+    # Sort by modification time to find newest files
+    found_files.sort(key=os.path.getmtime, reverse=True)
+
+    latest_db = ""
+    for fp in found_files:
+        rel = os.path.relpath(fp, example_path)
+        if fp.endswith('.db') or fp.endswith('.db3'):
+            outputs["databases"].append(rel)
+            if not latest_db:
+                latest_db = fp
+        elif fp.endswith('.log') or fp.endswith('.txt'):
+            outputs["logs"].append(rel)
+        elif fp.endswith('.xml'):
+            outputs["xml_files"].append(rel)
+
+    # If we found a database, get its tables and some sample messages
+    if latest_db:
+        outputs["dbPath"] = os.path.relpath(latest_db, UXAS_ROOT)
+        db_data = read_log_database(latest_db)
+        if "tables" in db_data:
+            outputs["dbTables"] = db_data["tables"]
+
+            # Try to find a message table for "messages" summary
+            msg_table = next((t for t in db_data["tables"]
+                              if t.lower() in ["messages", "lmcpmessages", "log"]), None)
+            if msg_table:
+                msg_data = read_log_database(latest_db, msg_table)
+                if "rows" in msg_data:
+                    # Map to the format the frontend expects
+                    # Columns might be Time, Type, Source, Content
+                    for r in msg_data["rows"][:200]:
+                        outputs["messages"].append({
+                            "time": str(r.get("Time", r.get("time", ""))),
+                            "type": str(r.get("MessageType", r.get("type", ""))),
+                            "source": str(r.get("SourceEntityID", r.get("source", ""))),
+                            "content": str(r.get("Payload", r.get("content", "")))
+                        })
+
     return outputs
 
 
@@ -520,20 +609,25 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
 
         elif path == "/api/config":
             fp = params.get("path", [""])[0]
+            if not os.path.isabs(fp):
+                fp = os.path.join(UXAS_ROOT, fp)
             if fp and os.path.isfile(fp):
                 self._send_json(parse_xml_config(fp))
             else:
-                self._send_json({"error": "File not found"}, 404)
+                self._send_json({"error": f"File not found: {fp}"}, 404)
 
         elif path == "/api/messages":
             ep = params.get("example", [""])[0]
             if ep:
-                self._send_json(list_message_files(ep))
+                example_path = os.path.join(EXAMPLES_DIR, ep)
+                self._send_json(list_message_files(example_path))
             else:
                 self._send_json([])
 
         elif path == "/api/message":
             fp = params.get("path", [""])[0]
+            if not os.path.isabs(fp):
+                fp = os.path.join(UXAS_ROOT, fp)
             if fp and os.path.isfile(fp):
                 self._send_json(parse_message_xml(fp))
             else:
@@ -541,6 +635,8 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
 
         elif path == "/api/message/raw":
             fp = params.get("path", [""])[0]
+            if not os.path.isabs(fp):
+                fp = os.path.join(UXAS_ROOT, fp)
             if fp and os.path.isfile(fp):
                 with open(fp, "r") as f:
                     self._send_json({"content": f.read()})
@@ -560,24 +656,42 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/outputs":
             ep = params.get("example", [""])[0]
             if ep:
-                self._send_json(find_run_outputs(ep))
+                example_path = os.path.join(EXAMPLES_DIR, ep)
+                self._send_json(find_run_outputs(example_path))
             else:
                 self._send_json({})
 
         elif path == "/api/logdb":
             fp = params.get("path", [""])[0]
+            table = params.get("table", [None])[0]
+            if not os.path.isabs(fp):
+                full_path = os.path.join(UXAS_ROOT, fp)
+                if not os.path.isfile(full_path):
+                    full_path = os.path.join(EXAMPLES_DIR, fp)
+                fp = full_path
+
             if fp and os.path.isfile(fp):
-                self._send_json(read_log_database(fp))
+                self._send_json(read_log_database(fp, table))
             else:
-                self._send_json({"error": "DB not found"}, 404)
+                self._send_json({"error": f"DB not found: {fp}"}, 404)
 
         elif path == "/api/file":
             fp = params.get("path", [""])[0]
+            if not os.path.isabs(fp):
+                fp = os.path.join(UXAS_ROOT, fp)
             if fp and os.path.isfile(fp):
                 with open(fp, "r") as f:
                     self._send_json({"content": f.read()})
             else:
-                self._send_json({"error": "File not found"}, 404)
+                self._send_json({"error": f"File not found: {fp}"}, 404)
+
+        elif path == "/api/debug":
+            self._send_json({
+                "UXAS_ROOT": UXAS_ROOT,
+                "EXAMPLES_DIR": EXAMPLES_DIR,
+                "UXAS_BIN": UXAS_BIN,
+                "cwd": os.getcwd()
+            })
 
         else:
             self._send_json({"error": "Unknown API"}, 404)
@@ -585,10 +699,23 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
     def _handle_api_post(self, path, data):
         if path == "/api/start":
             cfg = data.get("configPath", "")
+            example = data.get("example", "")
             run_dir = data.get("runDir", None)
+
+            if not cfg and example:
+                example_path = os.path.join(EXAMPLES_DIR, example)
+                cfg_files = glob.glob(os.path.join(example_path, "cfg_*.xml")) + \
+                            glob.glob(os.path.join(example_path, "*_cfg.xml"))
+                if cfg_files:
+                    cfg = cfg_files[0]
+            
             if not cfg:
-                self._send_json({"error": "configPath required"}, 400)
+                self._send_json({"error": "configPath or example required"}, 400)
                 return
+            
+            if not os.path.isabs(cfg):
+                cfg = os.path.join(UXAS_ROOT, cfg)
+            
             result = start_uxas(cfg, run_dir)
             self._send_json(result)
 
@@ -625,6 +752,10 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
             if not fp:
                 self._send_json({"error": "path required"}, 400)
                 return
+            
+            if not os.path.isabs(fp):
+                fp = os.path.join(UXAS_ROOT, fp)
+            
             try:
                 os.makedirs(os.path.dirname(fp), exist_ok=True)
                 with open(fp, "w") as f:
@@ -635,22 +766,18 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
 
         elif path == "/api/run/example":
             example_name = data.get("name", "")
-            # Extract just the directory name if full path was sent
             example_name = os.path.basename(example_name.rstrip("/\\"))
             example_path = os.path.join(EXAMPLES_DIR, example_name)
             if not os.path.isdir(example_path):
                 self._send_json({"error": f"Example not found: {example_name}"}, 404)
                 return
-            # Find config file
             cfg_files = glob.glob(os.path.join(example_path, "cfg_*.xml")) + \
                         glob.glob(os.path.join(example_path, "*_cfg.xml"))
             if not cfg_files:
-                self._send_json({"error": "No config file found"}, 404)
+                self._send_json({"error": f"No config file found in {example_path}"}, 404)
                 return
             cfg_path = cfg_files[0]
-            # Create RUNDIR
-            run_dir = os.path.join(example_path,
-                                   f"RUNDIR_{example_name}")
+            run_dir = os.path.join(example_path, f"RUNDIR_{example_name}")
             os.makedirs(run_dir, exist_ok=True)
             result = start_uxas(cfg_path, run_dir)
             self._send_json(result)
@@ -738,6 +865,14 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
             result["configPath"] = cfg_path
             result["runDir"] = run_dir
             self._send_json(result)
+
+        elif path == "/api/debug":
+            self._send_json({
+                "UXAS_ROOT": UXAS_ROOT,
+                "EXAMPLES_DIR": EXAMPLES_DIR,
+                "UXAS_BIN": UXAS_BIN,
+                "cwd": os.getcwd()
+            })
 
         else:
             self._send_json({"error": "Unknown API"}, 404)

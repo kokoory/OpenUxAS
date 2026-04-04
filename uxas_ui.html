@@ -506,8 +506,11 @@ async function loadOutputs(){
   const mb=document.getElementById('msg-tbody');
   if(mb&&d.messages?.length){
     mb.innerHTML=d.messages.map(m=>`<tr><td>${esc(m.time)}</td><td>${esc(m.type)}</td><td>${esc(m.source)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.content)}</td></tr>`).join('');
+  } else if(mb) {
+    mb.innerHTML='<tr><td colspan="4" style="text-align:center;color:#94a3b8">No messages found in logs</td></tr>';
   }
   if(d.dbTables){
+    S.lastDbPath = d.dbPath;
     const s=document.getElementById('db-table');
     if(s){s.innerHTML='<option>--</option>';d.dbTables.forEach(t=>{const o=document.createElement('option');o.value=t;o.textContent=t;s.appendChild(o);});}
   }
@@ -517,7 +520,8 @@ async function loadDbTable(){
   const ex=document.getElementById('output-example')?.value||'';
   const tb=document.getElementById('db-table')?.value||'';
   if(!tb||tb==='--')return;
-  const d=await api('/api/logdb?path='+encodeURIComponent(ex)+'&table='+encodeURIComponent(tb));
+  const path = S.lastDbPath || ex;
+  const d=await api('/api/logdb?path='+encodeURIComponent(path)+'&table='+encodeURIComponent(tb));
   const th=document.getElementById('db-thead');
   const tbody=document.getElementById('db-tbody');
   if(th&&d.columns)th.innerHTML='<tr>'+d.columns.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>';
