@@ -139,6 +139,88 @@ def list_message_files(example_path):
     return messages
 
 
+def _build_services_from_ui_config(config_data):
+    """Convert UI buildConfig() format to services list."""
+    services = []
+    algo = config_data.get("algorithm", {})
+    svc_settings = algo.get("services", {})
+
+    # Map of UI key -> (ServiceType, attributes builder)
+    svc_map = {
+        "arv": ("AutomationRequestValidatorService",
+                lambda s: {"MaxResponseTime_ms": str(
+                    s.get("maxResponseTime", 5000))}),
+        "taskManager": ("TaskManagerService", lambda s: {}),
+        "routePlanner": ("RoutePlannerVisibilityService",
+                         lambda s: {
+                             k: str(v) for k, v in {
+                                 "TurnRadiusOffset_m":
+                                     s.get("turnRadiusOffset"),
+                                 "MinWaypointSeparation_m":
+                                     s.get("minWaypointSeparation"),
+                             }.items() if v}),
+        "routeAggregator": ("RouteAggregatorService", lambda s: {}),
+        "atbb": ("AssignmentTreeBranchBoundService",
+                 lambda s: {
+                     k: str(v) for k, v in {
+                         "NumberNodesMaximum": s.get("maxNodes"),
+                         "CostFunction": s.get("costFunction"),
+                     }.items() if v}),
+        "planBuilder": ("PlanBuilderService",
+                        lambda s: {
+                            k: str(v) for k, v in {
+                                "AssignmentStartPointLead_m":
+                                    s.get("assignmentStartPointLead"),
+                            }.items() if v}),
+        "sensorManager": ("SensorManagerService", lambda s: {}),
+        "batchSummary": ("BatchSummaryService", lambda s: {}),
+    }
+
+    for key, (svc_type, attr_fn) in svc_map.items():
+        settings = svc_settings.get(key, {})
+        if settings.get("enabled", True):
+            attrs = attr_fn(settings)
+            services.append({"type": svc_type, "attributes": attrs})
+
+    # WaypointPlanManager
+    wp = algo.get("waypointManager", {})
+    if wp:
+        wp_attrs = {}
+        if wp.get("numServe"):
+            wp_attrs["NumberWaypointsToServe"] = str(wp["numServe"])
+        if wp.get("numOverlap"):
+            wp_attrs["NumberWaypointsOverlap"] = str(wp["numOverlap"])
+        if wp.get("loiterRadius"):
+            wp_attrs["DefaultLoiterRadius_m"] = str(wp["loiterRadius"])
+        if wp.get("turnType"):
+            wp_attrs["TurnType"] = wp["turnType"]
+        if wp.get("gimbalPayloadId"):
+            wp_attrs["GimbalPayloadId"] = str(wp["gimbalPayloadId"])
+        vid = config_data.get("entityId", 100)
+        wp_attrs["VehicleID"] = str(vid)
+        services.append({
+            "type": "WaypointPlanManagerService",
+            "attributes": wp_attrs
+        })
+
+    # Logging
+    logging = algo.get("logging", {})
+    if logging.get("enabled", True):
+        log_attrs = {}
+        if logging.get("messageCountLimit"):
+            log_attrs["MessageCountLimit"] = str(
+                logging["messageCountLimit"])
+        if logging.get("filesPerSubDir"):
+            log_attrs["FilesPerSubDirectory"] = str(
+                logging["filesPerSubDir"])
+        services.append({
+            "type": "MessageLoggerDataService",
+            "attributes": log_attrs
+        })
+
+    return services
+
+
 def generate_xml_config(config_data):
     """Generate UxAS XML configuration from structured data."""
     root = ET.Element("UxAS")
@@ -147,6 +229,12 @@ def generate_xml_config(config_data):
     root.set("EntityType", config_data.get("entityType", "Aircraft"))
     if config_data.get("runDuration"):
         root.set("RunDuration_s", str(config_data["runDuration"]))
+
+    # If config has 'algorithm' key, it's from the UI buildConfig()
+    # Convert to services list
+    services = config_data.get("services", [])
+    if not services and config_data.get("algorithm"):
+        services = _build_services_from_ui_config(config_data)
 
     for br in config_data.get("bridges", []):
         br_elem = ET.SubElement(root, "Bridge")
@@ -157,7 +245,7 @@ def generate_xml_config(config_data):
             sub_elem = ET.SubElement(br_elem, "SubscribeToMessage")
             sub_elem.set("MessageType", sub)
 
-    for svc in config_data.get("services", []):
+    for svc in services:
         svc_elem = ET.SubElement(root, "Service")
         svc_elem.set("Type", svc["type"])
         for k, v in svc.get("attributes", {}).items():
@@ -287,11 +375,14 @@ def generate_automation_request_xml(request_data):
     root.set("Series", "CMASI")
     ET.SubElement(root, "Label").text = request_data.get("label", "UIRequest")
     el = ET.SubElement(root, "EntityList")
-    for eid in request_data.get("entities", []):
+    entities = request_data.get("entities",
+                                request_data.get("entityIds", []))
+    for eid in entities:
         e = ET.SubElement(el, "int64")
         e.text = str(eid)
     tl = ET.SubElement(root, "TaskList")
-    for tid in request_data.get("tasks", []):
+    tasks = request_data.get("tasks", request_data.get("taskIds", []))
+    for tid in tasks:
         t = ET.SubElement(tl, "int64")
         t.text = str(tid)
     ET.indent(root, space="    ")
@@ -391,6 +482,22 @@ def read_log_database(db_path):
     except Exception as e:
         results.append({"error": str(e)})
     return results
+
+
+def read_log_table(db_path, table_name):
+    """Read a specific table from a UxAS log database."""
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT * FROM [{table_name}] LIMIT 500")
+        cols = [d[0] for d in cursor.description]
+        rows = []
+        for row in cursor.fetchall():
+            rows.append({cols[i]: str(v) for i, v in enumerate(row)})
+        conn.close()
+        return {"columns": cols, "rows": rows}
+    except Exception as e:
+        return {"error": str(e), "columns": [], "rows": []}
 
 
 def find_run_outputs(example_path):
@@ -558,18 +665,49 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
             })
 
         elif path == "/api/outputs":
-            ep = params.get("example", [""])[0]
+            ep = params.get("path", params.get("example", [""]))[0]
             if ep:
-                self._send_json(find_run_outputs(ep))
+                # Resolve relative paths against UXAS_ROOT
+                if not os.path.isabs(ep):
+                    ep = os.path.join(UXAS_ROOT, ep)
+                outputs = find_run_outputs(ep)
+                # Also look for .db files directly
+                db_files = []
+                for db in outputs.get("databases", []):
+                    db_files.append(os.path.join(ep, db))
+                # Get table names from first db
+                db_tables = []
+                if db_files and os.path.isfile(db_files[0]):
+                    try:
+                        conn = sqlite3.connect(db_files[0])
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "SELECT name FROM sqlite_master "
+                            "WHERE type='table'")
+                        db_tables = [r[0] for r in cursor.fetchall()]
+                        conn.close()
+                    except Exception:
+                        pass
+                outputs["dbPath"] = db_files[0] if db_files else ""
+                outputs["dbTables"] = db_tables
+                self._send_json(outputs)
             else:
                 self._send_json({})
 
         elif path == "/api/logdb":
             fp = params.get("path", [""])[0]
+            table = params.get("table", [""])[0]
+            if fp and not os.path.isabs(fp):
+                fp = os.path.join(UXAS_ROOT, fp)
             if fp and os.path.isfile(fp):
-                self._send_json(read_log_database(fp))
+                if table:
+                    # Return structured data for a specific table
+                    result = read_log_table(fp, table)
+                    self._send_json(result)
+                else:
+                    self._send_json(read_log_database(fp))
             else:
-                self._send_json({"error": "DB not found"}, 404)
+                self._send_json({"error": f"DB not found: {fp}"}, 404)
 
         elif path == "/api/file":
             fp = params.get("path", [""])[0]
@@ -586,8 +724,32 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/start":
             cfg = data.get("configPath", "")
             run_dir = data.get("runDir", None)
-            if not cfg:
+            example = data.get("example", "")
+            if not cfg and not example:
                 self._send_json({"error": "configPath required"}, 400)
+                return
+            # Resolve config path from example name
+            if not cfg and example:
+                example_name = os.path.basename(example.rstrip("/\\"))
+                example_path = os.path.join(EXAMPLES_DIR, example_name)
+                cfg_files = glob.glob(
+                    os.path.join(example_path, "cfg_*.xml")) + \
+                    glob.glob(os.path.join(example_path, "*_cfg.xml"))
+                if cfg_files:
+                    cfg = cfg_files[0]
+                    if not run_dir:
+                        run_dir = os.path.join(
+                            example_path,
+                            f"RUNDIR_{example_name}")
+                        os.makedirs(run_dir, exist_ok=True)
+            # Resolve relative paths
+            if cfg and not os.path.isabs(cfg):
+                cfg = os.path.join(UXAS_ROOT, cfg)
+            if run_dir and not os.path.isabs(run_dir):
+                run_dir = os.path.join(UXAS_ROOT, run_dir)
+            if not os.path.isfile(cfg):
+                self._send_json(
+                    {"error": f"Config file not found: {cfg}"}, 404)
                 return
             result = start_uxas(cfg, run_dir)
             self._send_json(result)
@@ -746,6 +908,10 @@ class UxASHandler(http.server.SimpleHTTPRequestHandler):
         pass  # Suppress default HTTP logs
 
 
+class ReusableTCPServer(socketserver.TCPServer):
+    allow_reuse_address = True
+
+
 def main():
     port = DEFAULT_PORT
     if len(sys.argv) > 1:
@@ -756,8 +922,7 @@ def main():
                 port = int(arg)
 
     handler = UxASHandler
-    with socketserver.TCPServer(("0.0.0.0", port), handler) as httpd:
-        httpd.allow_reuse_address = True
+    with ReusableTCPServer(("0.0.0.0", port), handler) as httpd:
         print(f"=" * 60)
         print(f"  OpenUxAS Web UI Server")
         print(f"  http://localhost:{port}")

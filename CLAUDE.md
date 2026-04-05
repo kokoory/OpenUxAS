@@ -394,17 +394,21 @@ python3 uxas_ui_server.py 9000     # custom port
 
 ### Architecture
 
-- **Backend**: `uxas_ui_server.py` (~460 lines) - Pure Python, no external dependencies
+- **Backend**: `uxas_ui_server.py` (~550 lines) - Pure Python, no external dependencies
+  - `ReusableTCPServer` with SO_REUSEADDR for quick restart
   - HTTP server using `http.server` standard library
   - REST API endpoints under `/api/`
   - Manages UxAS process lifecycle (start/stop via subprocess)
   - Generates XML configs, validates settings, reads SQLite log databases
+  - `_build_services_from_ui_config()`: converts UI algorithm settings to XML service list
+  - `read_log_table()`: per-table SQLite query with structured JSON response
   - Custom run mode: creates `custom_run/` directory with generated XML files
 
-- **Frontend**: `uxas_ui.html` (~570 lines) - Single-file HTML/CSS/JS
+- **Frontend**: `uxas_ui.html` (~580 lines) - Single-file HTML/CSS/JS
   - 6 tabs: Dashboard, Run Control, Input Config, Algorithm, Results, XML Editor
   - No external dependencies (no React, no npm, no CDN)
   - Communicates with backend via fetch() API calls
+  - State tracking for output paths and DB connections
 
 ### API Endpoints
 
@@ -416,13 +420,13 @@ python3 uxas_ui_server.py 9000     # custom port
 | GET | `/api/outputs?path=` | Load run results (messages, DB tables) |
 | GET | `/api/logdb?path=&table=` | Read SQLite log database |
 | GET | `/api/file?path=` | Read any project file |
-| POST | `/api/start` | Start UxAS with config |
+| POST | `/api/start` | Start UxAS with config (accepts configPath or example name) |
 | POST | `/api/stop` | Stop UxAS |
 | POST | `/api/validate` | Validate configuration |
 | POST | `/api/generate/vehicle` | Generate AirVehicleConfiguration XML |
 | POST | `/api/generate/task` | Generate task XML |
 | POST | `/api/generate/request` | Generate AutomationRequest XML |
-| POST | `/api/generate/config` | Generate full UxAS config XML |
+| POST | `/api/generate/config` | Generate full UxAS config XML (accepts services list or algorithm settings) |
 | POST | `/api/run/custom` | Generate all files + start UxAS |
 | POST | `/api/save` | Save file to disk |
 
@@ -456,6 +460,7 @@ python3 uxas_ui_server.py 9000     # custom port
 |------|-------------|
 | `uxas_ui_server.py` | Python web server backend |
 | `uxas_ui.html` | Browser-based control panel |
+| `WebUI_Guide_Korean.md` | Korean Web UI user guide |
 | `OpenUxAS_Guide_Korean.md` | Korean guide with 14 Mermaid diagrams + I/O variables |
 | `OpenUxAS_Guide_Korean.pdf` | PDF version of Korean guide |
 | `generate_pdf.py` | Markdown-to-PDF converter with Korean font support |
@@ -490,6 +495,25 @@ This section documents what was done across sessions so a new Claude session can
 - WaterwaySearch example: service initialization + DB creation OK
 - ARV integration test: AutomationRequest validation OK
 - All 3 tests passed
+
+### Web UI Bug Fixes (2026-04-06)
+
+Server-side fixes:
+- `ReusableTCPServer` subclass for proper SO_REUSEADDR (fixes "Address already in use" on restart)
+- `/api/outputs` resolves relative paths, returns dbPath and dbTables in response
+- `/api/logdb` supports `table` param for per-table queries via new `read_log_table()`
+- `/api/generate/config` handles both flat services list and UI's nested algorithm format via `_build_services_from_ui_config()`
+- `/api/generate/request` accepts both `entities`/`tasks` and `entityIds`/`taskIds`
+- `/api/start` resolves example names to full config paths, handles relative paths
+
+Frontend fixes:
+- Binary status check uses `binary_exists` field (was `pid`)
+- `doStart()` properly sends `example` field, validates input
+- `doRunCustom()` uses `/api/run/custom` with properly structured data
+- `loadOutputs()` uses correct API path, displays file listing with view buttons
+- `loadDbTable()` uses stored `currentDbPath`
+- `validateAll()` converts UI config format to services list before sending
+- `generateRequest()` uses correct field names
 
 ### Known Issues
 

@@ -269,7 +269,7 @@ td{padding:6px 8px;border:1px solid #e2e8f0}
 </div>
 <script>
 // === State ===
-let S={running:false,vid:400,tid:1,refreshId:null};
+let S={running:false,vid:400,tid:1,refreshId:null,currentOutputPath:'',currentDbPath:''};
 
 // === API ===
 async function api(url,data){
@@ -311,7 +311,7 @@ document.addEventListener('DOMContentLoaded',async()=>{
   if(xsel)exs.forEach(e=>(e.cfg_files||e.configs||[]).forEach(c=>{const p='examples/'+e.name+'/'+c;const o=document.createElement('option');o.value=p;o.textContent=e.name+'/'+c;xsel.appendChild(o);}));
   // bin status
   const bs=document.getElementById('bin-status');
-  if(bs){const st=await api('/api/status');bs.textContent=st.pid?'found':'ready';bs.style.color='#22c55e';}
+  if(bs){const st=await api('/api/status');bs.textContent=st.binary_exists?'found':'not found';bs.style.color=st.binary_exists?'#22c55e':'#ef4444';}
   checkStatus();
   S.refreshId=setInterval(checkStatus,3000);
   addVehicle();addTask();
@@ -338,30 +338,54 @@ async function quickStart(){
   // Extract example name from path (e.g. "/path/to/examples/01_HelloWorld" -> "01_HelloWorld")
   const name=ex.split('/').pop();
   const r=await api('/api/run/example',{name:name});
-  toast(r.message||r.error||'Started','#22c55e');
+  if(r.error){toast(r.error,'#ef4444');}else{toast(r.status||'Started','#22c55e');}
 }
 async function doStart(){
   const ex=document.getElementById('run-example')?.value||'';
   const cp=document.getElementById('config-path')?.value||'';
   const dur=document.getElementById('run-duration')?.value;
-  const r=await api('/api/start',{configPath:cp||ex,example:ex,runDuration:dur});
-  toast(r.message||'Started','#22c55e');
+  if(!cp&&!ex){toast('Select an example or enter config path','#eab308');return;}
+  const r=await api('/api/start',{configPath:cp,example:ex,runDuration:dur});
+  if(r.error){toast(r.error,'#ef4444');}else{toast(r.status||'Started','#22c55e');}
 }
 async function doStop(){
   const r=await api('/api/stop',{});
-  toast(r.message||'Stopped','#ef4444');
+  toast(r.status||'Stopped','#ef4444');
 }
 async function doRunCustom(){
-  // First generate config XML, then use /api/start
   const cfg=buildConfig();
-  toast('Generating config...','#3b82f6');
-  const gen=await api('/api/generate/config',cfg);
-  if(!gen.xml){toast('Config generation failed','#ef4444');return;}
-  // Save to custom_run/cfg_custom.xml
-  await api('/api/save',{path:'custom_run/cfg_custom.xml',content:gen.xml});
-  toast('Starting custom run...','#3b82f6');
-  const r=await api('/api/start',{configPath:'custom_run/cfg_custom.xml'});
-  toast(r.message||'Done','#22c55e');
+  toast('Building custom run...','#3b82f6');
+  // Use /api/run/custom which handles everything server-side
+  const vehicles=getVehicles().map(v=>({
+    ID:v.id,Label:v.label,MinimumSpeed:v.minSpeed,MaximumSpeed:v.maxSpeed,
+    NominalSpeed:v.nominalSpeed,NominalAltitude:v.altitude,NominalAltitudeType:'MSL',
+    flightProfile:{Airspeed:v.nominalSpeed,EnergyRate:v.energyRate}
+  }));
+  const states=getVehicles().map(v=>({
+    ID:v.id,Latitude:v.latitude,Longitude:v.longitude,Altitude:v.altitude,
+    AltitudeType:'MSL',Heading:v.heading,Airspeed:v.nominalSpeed,EnergyAvailable:100,Time:0
+  }));
+  const tasks=getTasks().map(t=>({
+    taskType:t.type,taskId:t.id,label:t.label,
+    points:t.points||[{lat:t.latitude||0,lng:t.longitude||0}]
+  }));
+  const request={entities:vehicles.map(v=>v.ID),tasks:tasks.map(t=>t.taskId)};
+  // Build services from algorithm settings
+  const algo=cfg.algorithm||{};
+  const svcSettings=algo.services||{};
+  const services=[];
+  if(svcSettings.arv?.enabled)services.push({type:'AutomationRequestValidatorService',attributes:{MaxResponseTime_ms:String(svcSettings.arv.maxResponseTime||5000)}});
+  if(svcSettings.taskManager?.enabled)services.push({type:'TaskManagerService',attributes:{}});
+  if(svcSettings.routePlanner?.enabled)services.push({type:'RoutePlannerVisibilityService',attributes:{}});
+  if(svcSettings.routeAggregator?.enabled)services.push({type:'RouteAggregatorService',attributes:{}});
+  if(svcSettings.atbb?.enabled)services.push({type:'AssignmentTreeBranchBoundService',attributes:{CostFunction:svcSettings.atbb.costFunction||'MINMAX'}});
+  if(svcSettings.planBuilder?.enabled)services.push({type:'PlanBuilderService',attributes:{}});
+  if(svcSettings.sensorManager?.enabled)services.push({type:'SensorManagerService',attributes:{}});
+  if(svcSettings.batchSummary?.enabled)services.push({type:'BatchSummaryService',attributes:{}});
+
+  const config={entityId:cfg.entityId,runDuration:cfg.runDuration,formatVersion:'1.0',services:services};
+  const r=await api('/api/run/custom',{config,vehicles,states,tasks,request,runName:'custom_run'});
+  if(r.error){toast(r.error,'#ef4444');}else{toast('Custom run started','#22c55e');}
 }
 function clearConsole(){['dash-console','run-console'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent='';});}
 function exportLog(){
@@ -475,7 +499,7 @@ async function generateAll(){
   toast('Config generated','#22c55e');
 }
 async function generateRequest(){
-  const r=await api('/api/generate/request',{entityIds:getVehicles().map(v=>v.id),taskIds:getTasks().map(t=>t.id)});
+  const r=await api('/api/generate/request',{entities:getVehicles().map(v=>v.id),tasks:getTasks().map(t=>t.id)});
   document.getElementById('prev-req').textContent=r.xml||'Error';
   switchPreview('req');toast('Request generated','#22c55e');
 }
@@ -483,11 +507,31 @@ async function generateRequest(){
 // === Validate ===
 async function validateAll(){
   const cfg=buildConfig();
-  const r=await api('/api/validate',cfg);
+  // Convert to format the validate API expects
+  const algo=cfg.algorithm||{};
+  const svcSettings=algo.services||{};
+  const services=[];
+  if(svcSettings.arv?.enabled)services.push({type:'AutomationRequestValidatorService',attributes:{}});
+  if(svcSettings.taskManager?.enabled)services.push({type:'TaskManagerService',attributes:{}});
+  if(svcSettings.routePlanner?.enabled)services.push({type:'RoutePlannerVisibilityService',attributes:{}});
+  if(svcSettings.routeAggregator?.enabled)services.push({type:'RouteAggregatorService',attributes:{}});
+  if(svcSettings.atbb?.enabled)services.push({type:'AssignmentTreeBranchBoundService',attributes:{CostFunction:svcSettings.atbb?.costFunction||'MINMAX'}});
+  if(svcSettings.planBuilder?.enabled)services.push({type:'PlanBuilderService',attributes:{}});
+  if(svcSettings.sensorManager?.enabled)services.push({type:'SensorManagerService',attributes:{}});
+  if(svcSettings.batchSummary?.enabled)services.push({type:'BatchSummaryService',attributes:{}});
+  services.push({type:'SendMessagesService',attributes:{}});
+  const wp=algo.waypointManager||{};
+  services.push({type:'WaypointPlanManagerService',attributes:{VehicleID:String(cfg.entityId||100)}});
+
+  const r=await api('/api/validate',{entityId:cfg.entityId,services:services});
   const el=document.getElementById('validation-result');
   if(el){
-    if(r.valid){el.style.color='#22c55e';el.textContent='Valid!\n'+(r.errors||[]).filter(e=>e.startsWith('Warning')).join('\n');}
-    else{el.style.color='#ef4444';el.textContent='Errors:\n'+(r.errors||[]).join('\n');}
+    let text='';
+    if(r.valid)text='Valid!';
+    else text='Errors:\n'+(r.errors||[]).join('\n');
+    if(r.warnings?.length)text+='\n\nWarnings:\n'+r.warnings.join('\n');
+    el.style.color=r.valid?'#22c55e':'#ef4444';
+    el.textContent=text;
   }
   toast(r.valid?'Valid':'Has errors',r.valid?'#22c55e':'#ef4444');
 }
@@ -502,24 +546,45 @@ function switchOutputSub(name){
 async function loadOutputs(){
   const ex=document.getElementById('output-example')?.value;
   if(!ex){toast('Select a run','#eab308');return;}
-  const d=await api('/api/outputs?example='+encodeURIComponent(ex));
+  const exPath='examples/'+ex;
+  const d=await api('/api/outputs?path='+encodeURIComponent(exPath));
+  S.currentOutputPath=exPath;
+  S.currentDbPath=d.dbPath||'';
   const mb=document.getElementById('msg-tbody');
-  if(mb&&d.messages?.length){
-    mb.innerHTML=d.messages.map(m=>`<tr><td>${esc(m.time)}</td><td>${esc(m.type)}</td><td>${esc(m.source)}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.content)}</td></tr>`).join('');
+  // Show XML files found
+  const xmlFiles=d.xml_files||[];
+  const logs=d.logs||[];
+  const dbs=d.databases||[];
+  if(mb){
+    let rows='';
+    xmlFiles.forEach(f=>{rows+=`<tr><td>-</td><td>XML</td><td>${esc(f)}</td><td><button class="btn btn-sm btn-gray" onclick="loadOutputFile('${esc(exPath+'/'+f)}')">View</button></td></tr>`;});
+    logs.forEach(f=>{rows+=`<tr><td>-</td><td>Log</td><td>${esc(f)}</td><td><button class="btn btn-sm btn-gray" onclick="loadOutputFile('${esc(exPath+'/'+f)}')">View</button></td></tr>`;});
+    dbs.forEach(f=>{rows+=`<tr><td>-</td><td>DB</td><td>${esc(f)}</td><td>Use Database tab</td></tr>`;});
+    mb.innerHTML=rows||'<tr><td colspan="4" style="text-align:center;color:#94a3b8">No output files found</td></tr>';
   }
-  if(d.dbTables){
+  if(d.dbTables&&d.dbTables.length){
     const s=document.getElementById('db-table');
     if(s){s.innerHTML='<option>--</option>';d.dbTables.forEach(t=>{const o=document.createElement('option');o.value=t;o.textContent=t;s.appendChild(o);});}
   }
-  toast('Loaded','#22c55e');
+  toast('Loaded '+dbs.length+' DBs, '+xmlFiles.length+' XMLs','#22c55e');
+}
+async function loadOutputFile(path){
+  const d=await api('/api/file?path='+encodeURIComponent(path));
+  if(d.content){
+    document.getElementById('xml-editor').value=d.content;
+    switchTab('xml');
+    toast('File loaded in XML editor','#22c55e');
+  }else{toast(d.error||'Failed to load','#ef4444');}
 }
 async function loadDbTable(){
-  const ex=document.getElementById('output-example')?.value||'';
+  const dbPath=S.currentDbPath||'';
   const tb=document.getElementById('db-table')?.value||'';
   if(!tb||tb==='--')return;
-  const d=await api('/api/logdb?path='+encodeURIComponent(ex)+'&table='+encodeURIComponent(tb));
+  if(!dbPath){toast('No database found. Load outputs first.','#eab308');return;}
+  const d=await api('/api/logdb?path='+encodeURIComponent(dbPath)+'&table='+encodeURIComponent(tb));
   const th=document.getElementById('db-thead');
   const tbody=document.getElementById('db-tbody');
+  if(d.error){toast(d.error,'#ef4444');return;}
   if(th&&d.columns)th.innerHTML='<tr>'+d.columns.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr>';
   if(tbody&&d.rows)tbody.innerHTML=d.rows.map(r=>'<tr>'+(d.columns||[]).map(c=>'<td>'+esc(String(r[c]??''))+'</td>').join('')+'</tr>').join('')||'<tr><td colspan="99" style="text-align:center;color:#94a3b8">No rows</td></tr>';
 }
