@@ -408,7 +408,7 @@ def start_uxas(config_path, run_dir=None):
         uxas_running = True
 
     def run():
-        global uxas_process, uxas_running
+        global uxas_process, uxas_running, uxas_output_lines
         try:
             proc = subprocess.Popen(
                 cmd, cwd=cwd,

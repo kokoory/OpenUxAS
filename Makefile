@@ -24,6 +24,10 @@ endif
 # Control whether full command line should be displayed during compilation
 DEBUG_BUILD=false
 
+# Local dependency paths (built from source when system packages unavailable)
+LOCAL_DEPS:=$(current_dir)local_deps
+LMCP_LIB_DIR:=$(current_dir)src/cpp/LMCP
+
 # Root directory in which the object and the final executable will be created
 OBJECT_DIR=obj/cpp
 
@@ -61,6 +65,9 @@ CXX_FLAGS+=-DBOOST_ALLOW_DEPRECATED_HEADERS
 #       boost
 CXX_FLAGS+=-DBOOST_GEOMETRY_DISABLE_DEPRECATED_03_WARNING
 
+# Include sqlite3.h for SQLITE_OPEN_* macros used by DatabaseLoggerHelper
+CXX_FLAGS+=-include sqlite3.h
+
 # Enable all warnings
 ifeq ($(ENABLE_WARNINGS),true)
     CXX_FLAGS+=-Wall
@@ -73,17 +80,20 @@ endif
 
 # Linker flags
 ifeq ($(PLATFORM),linux)
-    LINKER_FLAGS:=-std=c++17 -llmcp -lzyre -lpugixml -lboost_filesystem \
+    LINKER_FLAGS:=-std=c++17 -L$(LOCAL_DEPS)/lib -L$(LMCP_LIB_DIR) \
+-Wl,-rpath,'$$ORIGIN/../../local_deps/lib' \
+-llmcp -lzyre -lpugixml -lboost_filesystem \
 -lboost_regex -lboost_date_time -lboost_system -lSQLiteCpp -lsqlite3 \
--lczmq -luuid -lserial -lzmq -ldl -lpthread -static-libstdc++ -static-libgcc
+-lczmq -luuid -lserial -lzmq -ldl -lpthread
 else
-    LINKER_FLAGS:=-std=c++17 -llmcp -lzyre -lpugixml -lboost_filesystem \
+    LINKER_FLAGS:=-std=c++17 -L$(LOCAL_DEPS)/lib -L$(LMCP_LIB_DIR) \
+-llmcp -lzyre -lpugixml -lboost_filesystem \
 -lboost_regex -lboost_date_time -lboost_system -lSQLiteCpp -lsqlite3 \
 -lczmq -lserial -lzmq -ldl -lpthread
 endif
 
 # Include flags
-INCLUDES=$(foreach source_dir, $(SOURCE_DIRS), -I$(source_dir))
+INCLUDES=-I$(LOCAL_DEPS)/include -I$(LMCP_LIB_DIR) $(foreach source_dir, $(SOURCE_DIRS), -I$(source_dir))
 
 # The list of sources
 SOURCES:=$(foreach source_dir, $(SOURCE_DIRS), $(wildcard $(source_dir)/*.cpp))

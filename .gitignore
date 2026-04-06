@@ -78,3 +78,5 @@ uxas-ada
 tests/cpp/log
 tests/cpp/results
 tests/proof/out
+local_deps/
+log/
