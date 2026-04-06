@@ -212,7 +212,7 @@ def check_amase(
 
     If any errors are encountered, report them and immediately exit.
     """
-    if AMASE_YAML_KEY not in loaded_yaml.keys():
+    if AMASE_YAML_KEY not in loaded_yaml.keys() or getattr(args, 'no_amase', False):
         return (None, None, 0, None)
 
     if SCENARIO_YAML_KEY not in loaded_yaml[AMASE_YAML_KEY].keys():
@@ -534,6 +534,14 @@ def run_example_main() -> int:
         type=int,
         help="number of seconds to wait after starting OpenAMASE"
         "before starting instances of OpenUxAS",
+    )
+
+    argument_parser.add_argument(
+        "--no-amase",
+        dest="no_amase",
+        default=False,
+        action="store_true",
+        help="skip OpenAMASE even if the example configuration includes it",
     )
 
     add_amase_dir_argument(argument_parser)
