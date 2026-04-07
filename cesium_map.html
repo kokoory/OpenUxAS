@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OpenUxAS 3D Map</title>
+<script src="https://cesium.com/downloads/cesiumjs/releases/1.119/Build/Cesium/Cesium.js"></script>
+<link href="https://cesium.com/downloads/cesiumjs/releases/1.119/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<style>
+html,body,#cesiumContainer{margin:0;padding:0;width:100%;height:100%;overflow:hidden}
+#fallback{display:none;width:100%;height:100%;background:#1a1a2e;position:absolute;top:0;left:0}
+#fallback canvas{width:100%;height:100%}
+#status{position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.7);color:#0f0;padding:4px 10px;border-radius:4px;font:12px monospace;z-index:100}
+</style>
+</head>
+<body>
+<div id="cesiumContainer"></div>
+<div id="fallback"><canvas id="fallbackCanvas"></canvas></div>
+<div id="status">Initializing...</div>
+<script>
+// === State ===
+const vehicles = {};
+const waypoints = {};
+const routes = {};
+const taskAreas = {};
+const zones = {};
+const trails = {};
+let viewer = null;
+let useFallback = false;
+let statusEl = document.getElementById('status');
+
+// === Initialize Cesium ===
+function initCesium() {
+  try {
+    // No token needed - use OpenStreetMap tiles
+    Cesium.Ion.defaultAccessToken = undefined;
+    viewer = new Cesium.Viewer('cesiumContainer', {
+      imageryProvider: new Cesium.OpenStreetMapImageryProvider({
+        url: 'https://tile.openstreetmap.org/'
+      }),
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: true,
+      navigationHelpButton: false,
+      animation: false,
+      timeline: false,
+      fullscreenButton: false,
+      vrButton: false,
+      infoBox: true,
+      selectionIndicator: true
+    });
+    viewer.scene.globe.enableLighting = false;
+    // Default view - Korea/Pacific
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(-120.96, 45.32, 50000)
+    });
+    statusEl.textContent = 'Cesium 3D Ready';
+  } catch(e) {
+    console.warn('Cesium failed, using fallback:', e);
+    useFallback = true;
+    document.getElementById('cesiumContainer').style.display = 'none';
+    document.getElementById('fallback').style.display = 'block';
+    initFallback();
+  }
+}
+
+// === Fallback 2D Canvas Map ===
+let fbCtx, fbW, fbH, fbCenterLat=45.32, fbCenterLng=-120.96, fbZoom=0.0001;
+function initFallback() {
+  const c = document.getElementById('fallbackCanvas');
+  fbCtx = c.getContext('2d');
+  fbW = c.width = window.innerWidth;
+  fbH = c.height = window.innerHeight;
+  statusEl.textContent = '2D Fallback Mode';
+  drawFallback();
+  // Pan & zoom
+  let dragging=false, lastX, lastY;
+  c.onmousedown = e => { dragging=true; lastX=e.clientX; lastY=e.clientY; };
+  c.onmousemove = e => { if(!dragging) return; fbCenterLng -= (e.clientX-lastX)*fbZoom; fbCenterLat += (e.clientY-lastY)*fbZoom; lastX=e.clientX; lastY=e.clientY; drawFallback(); };
+  c.onmouseup = () => dragging=false;
+  c.onwheel = e => { fbZoom *= e.deltaY > 0 ? 1.2 : 0.83; drawFallback(); };
+  window.onresize = () => { fbW=c.width=window.innerWidth; fbH=c.height=window.innerHeight; drawFallback(); };
+}
+function latLngToFb(lat, lng) {
+  return { x: (lng - fbCenterLng) / fbZoom + fbW/2, y: (fbCenterLat - lat) / fbZoom + fbH/2 };
+}
+function drawFallback() {
+  if(!fbCtx) return;
+  fbCtx.fillStyle = '#1a1a2e'; fbCtx.fillRect(0, 0, fbW, fbH);
+  // Grid
+  fbCtx.strokeStyle = '#333'; fbCtx.lineWidth = 0.5; fbCtx.font = '10px monospace'; fbCtx.fillStyle = '#555';
+  const step = Math.pow(10, Math.floor(Math.log10(fbZoom * fbW / 5)));
+  const startLng = Math.floor(fbCenterLng / step - fbW*fbZoom/(2*step)) * step;
+  const startLat = Math.floor(fbCenterLat / step - fbH*fbZoom/(2*step)) * step;
+  for(let lng = startLng; lng < startLng + fbW*fbZoom + step; lng += step) {
+    const p = latLngToFb(0, lng); fbCtx.beginPath(); fbCtx.moveTo(p.x, 0); fbCtx.lineTo(p.x, fbH); fbCtx.stroke();
+    fbCtx.fillText(lng.toFixed(4), p.x+2, 12);
+  }
+  for(let lat = startLat; lat < startLat + fbH*fbZoom + step; lat += step) {
+    const p = latLngToFb(lat, 0); fbCtx.beginPath(); fbCtx.moveTo(0, p.y); fbCtx.lineTo(fbW, p.y); fbCtx.stroke();
+    fbCtx.fillText(lat.toFixed(4), 2, p.y-2);
+  }
+  // Zones
+  Object.values(zones).forEach(z => {
+    if(!z.points || z.points.length < 2) return;
+    fbCtx.beginPath();
+    z.points.forEach((p,i) => { const pp = latLngToFb(p.lat, p.lng); i===0 ? fbCtx.moveTo(pp.x, pp.y) : fbCtx.lineTo(pp.x, pp.y); });
+    fbCtx.closePath();
+    fbCtx.fillStyle = z.type === 'keepin' ? 'rgba(0,200,0,0.15)' : 'rgba(200,0,0,0.15)';
+    fbCtx.fill();
+    fbCtx.strokeStyle = z.type === 'keepin' ? '#0a0' : '#a00'; fbCtx.lineWidth = 2; fbCtx.stroke();
+  });
+  // Task areas
+  Object.values(taskAreas).forEach(t => {
+    if(!t.points || t.points.length < 2) return;
+    fbCtx.beginPath();
+    t.points.forEach((p,i) => { const pp = latLngToFb(p.lat, p.lng); i===0 ? fbCtx.moveTo(pp.x, pp.y) : fbCtx.lineTo(pp.x, pp.y); });
+    if(t.type === 'area') fbCtx.closePath();
+    fbCtx.fillStyle = 'rgba(255,200,0,0.1)'; if(t.type === 'area') fbCtx.fill();
+    fbCtx.strokeStyle = '#fc0'; fbCtx.lineWidth = 2; fbCtx.stroke();
+    const fp = latLngToFb(t.points[0].lat, t.points[0].lng);
+    fbCtx.fillStyle = '#fc0'; fbCtx.fillText(t.label || 'T'+t.id, fp.x+4, fp.y-4);
+  });
+  // Routes
+  const colors = ['#0af','#f80','#0f8','#f0a','#8f0','#a0f'];
+  Object.entries(routes).forEach(([vid, wps], ci) => {
+    if(wps.length < 2) return;
+    fbCtx.beginPath(); fbCtx.strokeStyle = colors[ci % colors.length]; fbCtx.lineWidth = 2;
+    wps.forEach((w,i) => { const p = latLngToFb(w.lat, w.lng); i===0 ? fbCtx.moveTo(p.x, p.y) : fbCtx.lineTo(p.x, p.y); });
+    fbCtx.stroke();
+    wps.forEach(w => { const p = latLngToFb(w.lat, w.lng); fbCtx.beginPath(); fbCtx.arc(p.x, p.y, 4, 0, Math.PI*2); fbCtx.fillStyle = colors[ci % colors.length]; fbCtx.fill(); fbCtx.fillText('W'+w.id, p.x+6, p.y-4); });
+  });
+  // Trails
+  Object.entries(trails).forEach(([vid, pts]) => {
+    if(pts.length < 2) return;
+    fbCtx.beginPath(); fbCtx.strokeStyle = 'rgba(100,200,255,0.3)'; fbCtx.lineWidth = 1;
+    pts.forEach((p,i) => { const pp = latLngToFb(p.lat, p.lng); i===0 ? fbCtx.moveTo(pp.x, pp.y) : fbCtx.lineTo(pp.x, pp.y); });
+    fbCtx.stroke();
+  });
+  // Vehicles
+  Object.entries(vehicles).forEach(([vid, v], ci) => {
+    const p = latLngToFb(v.lat, v.lng);
+    const rad = (v.heading || 0) * Math.PI / 180;
+    const sz = 12;
+    fbCtx.save(); fbCtx.translate(p.x, p.y); fbCtx.rotate(rad);
+    fbCtx.beginPath(); fbCtx.moveTo(0, -sz); fbCtx.lineTo(-sz*0.6, sz*0.5); fbCtx.lineTo(sz*0.6, sz*0.5); fbCtx.closePath();
+    fbCtx.fillStyle = colors[ci % colors.length]; fbCtx.fill();
+    fbCtx.strokeStyle = '#fff'; fbCtx.lineWidth = 1; fbCtx.stroke();
+    fbCtx.restore();
+    fbCtx.fillStyle = '#fff'; fbCtx.font = 'bold 11px monospace';
+    fbCtx.fillText('V'+vid, p.x+14, p.y+4);
+    fbCtx.font = '9px monospace'; fbCtx.fillStyle = '#aaa';
+    fbCtx.fillText(`${v.lat.toFixed(4)},${v.lng.toFixed(4)} h=${v.heading||0}`, p.x+14, p.y+16);
+  });
+}
+
+// === API called from Python via QWebChannel or postMessage ===
+
+function updateVehicle(id, lat, lng, alt, heading, speed) {
+  if(!trails[id]) trails[id] = [];
+  trails[id].push({lat, lng});
+  if(trails[id].length > 300) trails[id].shift();
+  vehicles[id] = {lat, lng, alt, heading: heading||0, speed: speed||0};
+  if(useFallback) { drawFallback(); return; }
+  if(!viewer) return;
+  const pos = Cesium.Cartesian3.fromDegrees(lng, lat, alt||0);
+  const hpr = new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(heading||0), 0, 0);
+  const key = 'vehicle_'+id;
+  if(viewer.entities.getById(key)) {
+    const e = viewer.entities.getById(key);
+    e.position = pos; e.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, hpr);
+    e.description = `<b>Vehicle ${id}</b><br>Lat: ${lat.toFixed(5)}<br>Lng: ${lng.toFixed(5)}<br>Alt: ${alt}m<br>Speed: ${speed}m/s`;
+  } else {
+    viewer.entities.add({
+      id: key, name: 'Vehicle '+id, position: pos,
+      orientation: Cesium.Transforms.headingPitchRollQuaternion(pos, hpr),
+      point: {pixelSize:12, color: Cesium.Color.fromHsl((id*0.27)%1, 1.0, 0.6), outlineColor: Cesium.Color.WHITE, outlineWidth:2},
+      label: {text:'V'+id, font:'12px sans-serif', fillColor:Cesium.Color.WHITE, style:Cesium.LabelStyle.FILL_AND_OUTLINE, outlineWidth:2, verticalOrigin:Cesium.VerticalOrigin.BOTTOM, pixelOffset:new Cesium.Cartesian2(0,-16)},
+      description: `<b>Vehicle ${id}</b>`
+    });
+  }
+  // Trail polyline
+  const tkey = 'trail_'+id;
+  const tpts = trails[id].flatMap(p => [p.lng, p.lat, 100]);
+  const existing = viewer.entities.getById(tkey);
+  if(existing) { existing.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights(tpts); }
+  else { viewer.entities.add({id:tkey, polyline:{positions:Cesium.Cartesian3.fromDegreesArrayHeights(tpts), width:2, material:new Cesium.ColorMaterialProperty(Cesium.Color.fromHsl((id*0.27)%1,0.8,0.5,0.4))}}); }
+  statusEl.textContent = `Vehicles: ${Object.keys(vehicles).length} | Last: V${id} [${lat.toFixed(4)}, ${lng.toFixed(4)}]`;
+}
+
+function addWaypoint(wpId, lat, lng, alt, vehicleId) {
+  waypoints[wpId] = {lat, lng, alt, vehicleId};
+  if(useFallback) { drawFallback(); return; }
+  if(!viewer) return;
+  const key = 'wp_'+wpId;
+  if(!viewer.entities.getById(key)) {
+    viewer.entities.add({
+      id: key, name: 'WP '+wpId,
+      position: Cesium.Cartesian3.fromDegrees(lng, lat, alt||0),
+      point: {pixelSize:7, color:Cesium.Color.YELLOW, outlineColor:Cesium.Color.BLACK, outlineWidth:1},
+      label: {text:String(wpId), font:'10px sans-serif', fillColor:Cesium.Color.YELLOW, pixelOffset:new Cesium.Cartesian2(8,-8), scale:0.8}
+    });
+  }
+}
+
+function drawRoute(vehicleId, wpList) {
+  // wpList = [{id,lat,lng,alt}, ...]
+  routes[vehicleId] = wpList;
+  if(useFallback) { drawFallback(); return; }
+  if(!viewer) return;
+  const key = 'route_'+vehicleId;
+  const positions = wpList.flatMap(w => [w.lng, w.lat, w.alt||500]);
+  const existing = viewer.entities.getById(key);
+  const color = Cesium.Color.fromHsl((vehicleId*0.27)%1, 1.0, 0.6);
+  if(existing) { existing.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights(positions); }
+  else { viewer.entities.add({id:key, name:'Route V'+vehicleId, polyline:{positions:Cesium.Cartesian3.fromDegreesArrayHeights(positions), width:3, material:color, clampToGround:false}}); }
+}
+
+function drawTaskArea(taskId, type, label, points) {
+  // points = [{lat,lng}, ...]
+  taskAreas[taskId] = {type, label, points, id:taskId};
+  if(useFallback) { drawFallback(); return; }
+  if(!viewer) return;
+  const key = 'task_'+taskId;
+  if(viewer.entities.getById(key)) viewer.entities.removeById(key);
+  if(type === 'area' && points.length >= 3) {
+    const hierarchy = new Cesium.PolygonHierarchy(points.map(p => Cesium.Cartesian3.fromDegrees(p.lng, p.lat)));
+    viewer.entities.add({id:key, name:label||'Task '+taskId, polygon:{hierarchy, material:Cesium.Color.ORANGE.withAlpha(0.2), outline:true, outlineColor:Cesium.Color.ORANGE, outlineWidth:2, height:0}});
+  } else if(type === 'line' && points.length >= 2) {
+    const positions = points.map(p => Cesium.Cartesian3.fromDegrees(p.lng, p.lat));
+    viewer.entities.add({id:key, name:label||'Task '+taskId, polyline:{positions, width:3, material:Cesium.Color.ORANGE}});
+  } else if(type === 'point' && points.length >= 1) {
+    viewer.entities.add({id:key, name:label||'Task '+taskId, position:Cesium.Cartesian3.fromDegrees(points[0].lng, points[0].lat), point:{pixelSize:10, color:Cesium.Color.ORANGE}});
+  }
+}
+
+function drawZone(zoneId, type, points) {
+  // type = 'keepin' or 'keepout'
+  zones[zoneId] = {type, points, id:zoneId};
+  if(useFallback) { drawFallback(); return; }
+  if(!viewer || points.length < 3) return;
+  const key = 'zone_'+zoneId;
+  if(viewer.entities.getById(key)) viewer.entities.removeById(key);
+  const color = type === 'keepin' ? Cesium.Color.GREEN.withAlpha(0.15) : Cesium.Color.RED.withAlpha(0.15);
+  const outColor = type === 'keepin' ? Cesium.Color.GREEN : Cesium.Color.RED;
+  const hierarchy = new Cesium.PolygonHierarchy(points.map(p => Cesium.Cartesian3.fromDegrees(p.lng, p.lat)));
+  viewer.entities.add({id:key, name:(type==='keepin'?'KeepIn':'KeepOut')+' '+zoneId, polygon:{hierarchy, material:color, outline:true, outlineColor:outColor, outlineWidth:2, height:0}});
+}
+
+function flyTo(lat, lng, alt) {
+  if(useFallback) { fbCenterLat=lat; fbCenterLng=lng; drawFallback(); return; }
+  if(!viewer) return;
+  viewer.camera.flyTo({destination: Cesium.Cartesian3.fromDegrees(lng, lat, alt||30000), duration:1.5});
+}
+
+function fitAll() {
+  const allPts = Object.values(vehicles).map(v => ({lat:v.lat, lng:v.lng}));
+  Object.values(waypoints).forEach(w => allPts.push({lat:w.lat, lng:w.lng}));
+  if(allPts.length === 0) return;
+  const minLat = Math.min(...allPts.map(p=>p.lat)), maxLat = Math.max(...allPts.map(p=>p.lat));
+  const minLng = Math.min(...allPts.map(p=>p.lng)), maxLng = Math.max(...allPts.map(p=>p.lng));
+  if(useFallback) { fbCenterLat=(minLat+maxLat)/2; fbCenterLng=(minLng+maxLng)/2; fbZoom=Math.max(maxLat-minLat,maxLng-minLng)/Math.min(fbW,fbH)*1.5||0.001; drawFallback(); return; }
+  if(!viewer) return;
+  viewer.camera.flyTo({destination:Cesium.Rectangle.fromDegrees(minLng-0.01, minLat-0.01, maxLng+0.01, maxLat+0.01), duration:1.5});
+}
+
+function clearAll() {
+  Object.keys(vehicles).forEach(k => delete vehicles[k]);
+  Object.keys(waypoints).forEach(k => delete waypoints[k]);
+  Object.keys(routes).forEach(k => delete routes[k]);
+  Object.keys(taskAreas).forEach(k => delete taskAreas[k]);
+  Object.keys(zones).forEach(k => delete zones[k]);
+  Object.keys(trails).forEach(k => delete trails[k]);
+  if(viewer) viewer.entities.removeAll();
+  if(useFallback) drawFallback();
+}
+
+function setMapProvider(provider, apiKey) {
+  if(!viewer) return;
+  viewer.imageryLayers.removeAll();
+  if(provider === 'osm') {
+    viewer.imageryLayers.addImageryProvider(new Cesium.OpenStreetMapImageryProvider({url:'https://tile.openstreetmap.org/'}));
+  } else if(provider === 'vworld' && apiKey) {
+    viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({url:`http://api.vworld.kr/req/wmts/1.0.0/${apiKey}/Base/{z}/{y}/{x}.png`, maximumLevel:19}));
+  }
+}
+
+// Init
+initCesium();
+</script>
+</body>
+</html>
